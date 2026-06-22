@@ -5,37 +5,59 @@
 CMIP6 Availability Inventory Builder
 ====================================
 
-Genera una matriz de disponibilidad de variables CMIP6 a partir del
-índice ESGF-West (MetaGrid).
+Construye un inventario de disponibilidad de variables CMIP6 a partir
+del índice ESGF-West (MetaGrid).
 
-Para cada combinación de:
+El objetivo es identificar qué combinaciones de:
+
+    source_id
+    variant_label
+
+disponen simultáneamente de todas las variables requeridas para todos
+los experimentos especificados.
+
+La disponibilidad se evalúa para cada combinación:
 
     source_id
     variant_label
     experiment_id
 
+y posteriormente se consolida a nivel de:
 
-determina si existen los datasets correspondientes a las variables
-seleccionadas.
+    source_id
+    variant_label
 
-Salida:
+Características principales
+---------------------------
 
-    cmip6_daily_inventory.csv
-    cmip6_daily_inventory.xlsx
+- Consulta automática del índice ESGF mediante la API Solr.
+- Soporte para múltiples variables y experimentos.
+- Generación de inventario detallado.
+- Identificación de realizaciones completas.
+- Comparación con el catálogo de modelos soportados por GCMEval.
+- Generación de enlaces directos a MetaGrid.
 
-Hojas Excel:
+Salidas
+--------
+
+cmip6_daily_inventory.csv
+
+cmip6_daily_inventory.xlsx
 
     inventory
         Disponibilidad detallada por modelo-realización-experimento.
 
     summary
-        Resumen por modelo-realización.
+        Resumen consolidado por modelo-realización.
 
     selected
-        Modelos y realizaciones que poseen todas las variables para
-        todos los experimentos solicitados.
+        Realizaciones que poseen todas las variables para todos los
+        experimentos requeridos.
 
 Autor: Will Abarca (wabarca@ambiente.gob.sv)
+------
+
+
 """
 
 import requests
@@ -51,7 +73,7 @@ from urllib.parse import quote
 # Endpoint utilizado por MetaGrid para consultar el índice ESGF
 BASE_URL = "https://metagrid.esgf-west.org/proxy/search"
 
-# Variables atmosféricas de interés
+# Variables atmosféricas de interés (se pueden agregar más si se desea)
 VARIABLES = [
     "ua",  # Viento zonal
     "va",  # Viento meridional
@@ -62,7 +84,7 @@ VARIABLES = [
     "psl",  # Presión reducida al nivel del mar
 ]
 
-# Experimentos CMIP6 considerados
+# Experimentos CMIP6 considerados (se pueden agregar más si se desea)
 EXPERIMENTS = [
     "historical",
     "ssp126",
@@ -71,7 +93,7 @@ EXPERIMENTS = [
     "ssp585",
 ]
 
-# Frecuencia temporal requerida
+# Frecuencia temporal requerida (para este inventario se utiliza "day", pero se pueden utilizar otras frecuencias como "mon", "3hr", etc.)
 TABLE_ID = "day"
 
 # Tamaño de página utilizado para paginación
@@ -80,8 +102,29 @@ PAGE_SIZE = 1000
 
 def build_metagrid_url(source_id, variant_label):
     """
-    Construye una URL de MetaGrid para la combinación
-    modelo + realización seleccionada.
+    Construye una URL de búsqueda de MetaGrid para una
+    realización específica.
+
+    La URL incorpora automáticamente:
+
+    - variables definidas en VARIABLES
+    - experimentos definidos en EXPERIMENTS
+    - frecuencia TABLE_ID
+    - source_id
+    - variant_label
+
+    Parameters
+    ----------
+    source_id : str
+        Nombre del modelo CMIP6.
+
+    variant_label : str
+        Identificador de la realización.
+
+    Returns
+    -------
+    str
+        URL completa de MetaGrid.
     """
 
     active_facets = {
@@ -140,23 +183,37 @@ def first(value):
 
 def fetch_variable_experiment(variable, experiment):
     """
-    Recupera todos los datasets correspondientes a una combinación
-    variable + experimento.
+    Recupera todos los datasets asociados a una combinación
+    variable-experimento mediante consultas paginadas al
+    índice ESGF.
 
-    Se utiliza paginación mediante offset y limit.
+    La consulta utiliza:
 
-    Parameters
-    ----------
-    variable : str
-        Variable CMIP6.
+        latest=true
+        replica=false
 
-    experiment : str
-        Experimento CMIP6.
+    para evitar versiones obsoletas y duplicados entre nodos.
+
+    La paginación se realiza mediante los parámetros:
+
+        limit
+        offset
+
+    hasta recuperar la totalidad de documentos.
 
     Returns
     -------
-    list
-        Lista de documentos ESGF.
+    tuple
+        (
+            docs,
+            numFound
+        )
+
+        docs
+            Lista de documentos recuperados.
+
+        numFound
+            Número total de documentos reportados por ESGF.
     """
 
     offset = 0
@@ -209,27 +266,34 @@ def fetch_variable_experiment(variable, experiment):
 
 def build_inventory():
     """
-    Construye el inventario de disponibilidad.
+    Construye la matriz de disponibilidad.
 
-    La clave de agregación utilizada es:
+    Cada fila representa:
 
-        (
-            source_id,
-            variant_label,
-            experiment_id
-        )
+        source_id
+        variant_label
+        experiment_id
 
-    Para cada clave se almacena el conjunto de variables encontradas.
+    y contiene una columna booleana por variable.
 
-    Returns
-    -------
-    tuple
-        (
-            inventory_dataframe,
-            statistics_dict
-        )
+    Ejemplo:
+
+        source_id
+        variant_label
+        experiment_id
+        ua
+        va
+        ta
+        hur
+        hus
+        zg
+        psl
+
+    La columna 'score' indica el número de variables disponibles.
+
+    La columna 'complete' indica si todas las variables
+    requeridas están presentes.
     """
-
     inventory = defaultdict(set)
 
     # Estadísticas de control
@@ -339,7 +403,21 @@ def build_inventory():
 
 def build_summary(df):
     """
-    Genera un resumen por modelo-realización.
+    Consolida la disponibilidad a nivel de:
+
+        source_id
+        variant_label
+
+    Calcula:
+
+    - Número de experimentos completos.
+    - Número total de variables disponibles.
+    - Porcentaje de disponibilidad.
+    - Indicador de completitud global.
+
+    Returns
+    -------
+    pandas.DataFrame
     """
 
     max_possible = len(VARIABLES) * len(EXPERIMENTS)
@@ -387,6 +465,18 @@ def main():
     # -------------------------------------------------
     # Comparación con modelos disponibles en GCMEval
     # -------------------------------------------------
+    # -------------------------------------------------
+    # GCMEval utiliza la combinación:
+    #
+    #     source_id
+    #     variant_label
+    #
+    # para identificar las realizaciones disponibles
+    # dentro de la herramienta.
+    #
+    # Se genera una clave compuesta para realizar
+    # la comparación con el inventario ESGF.
+    # -------------------------------------------------
 
     gcmeval = pd.read_csv("gcmeval_models.csv")
 
@@ -407,6 +497,9 @@ def main():
     # -------------------------------------------------
     # Selección final
     # -------------------------------------------------
+    # Seleccionar únicamente aquellas realizaciones
+    # que poseen todas las variables requeridas para
+    # todos los experimentos definidos en EXPERIMENTS.
 
     selected = summary[summary["complete_experiments"] == len(EXPERIMENTS)].copy()
 
@@ -436,6 +529,11 @@ def main():
         summary.to_excel(writer, sheet_name="summary", index=False)
 
         selected.to_excel(writer, sheet_name="selected", index=False)
+
+        # Formato visual utilizado en Excel:
+        #
+        # Verde claro : disponibilidad confirmada
+        # Rojo claro  : disponibilidad ausente
 
         from openpyxl.styles import PatternFill
 
