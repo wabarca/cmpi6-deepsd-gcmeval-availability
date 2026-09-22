@@ -1,3 +1,55 @@
+# ==============================================================================
+# Git Ignore Configuration - CMIP6 Downscaling & Evaluation Workflow
+# ==============================================================================
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.ipynb_checkpoints/
+.pytest_cache/
+
+# IDE and Editor configurations
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Submodules, legacy directories and external tools
 gcmeval/
 results/
+
+# NetCDF, GRIB and climate data binary files
+*.nc
+*.nc4
+*.cdf
+*.grb
+*.grb2
+*.grib
+*.grib2
+samplegrid.nc
+
+# Output directories from download & CDO preprocessing pipelines
+CMIP6_GCMs_Processed/
+CMIP6_GCMs_Merged/
+CMIP6_GCMs_Remaped/
+CMIP6_GCMs_Corrected/
+CMIP6_GCMs_Regridded/
+tmp_cmip6_processing/
+tmp_cmip6_raw/
+tmp_*/
+
+# Download manager cache, logs and temporary files
+*.aria2
+*.log
+*.pid
+.cmip6_pipeline.pid
+downloads.txt
+aria2_input.txt
+
+# Temporary test files and backups
+test_*
+cmip6_daily_inventory_*.xlsx
