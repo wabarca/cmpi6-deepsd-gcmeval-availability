@@ -294,6 +294,80 @@ ps aux | grep download_preprocess_cmip6
 
 ---
 
+## 🪟 Ejecución en Windows con WSL2 (Sin que se corte al cerrar la ventana)
+
+En **WSL2**, si cierras la ventana de Windows Terminal / Ubuntu, Windows envía una señal `SIGHUP` a los procesos interactivos y, además, puede suspender la máquina virtual de WSL2 si no detecta actividad activa.
+
+Para evitar que el proceso se corte al cerrar la ventana en WSL2:
+
+### 1. Método Recomendado: `tmux` + Mantener WSL2 Activo
+
+1. **Instalar `tmux` en WSL2:**
+   ```bash
+   sudo apt-get install tmux -y
+   # o con mamba:
+   mamba install -c conda-forge tmux -y
+   ```
+
+2. **Iniciar una sesión de `tmux` dentro de WSL2:**
+   ```bash
+   tmux new -s cmip6_job
+   ```
+
+3. **Ejecutar el script:**
+   ```bash
+   ./download_preprocess_cmip6.sh
+   ```
+
+4. **Desconectar la sesión (`Detach`):**
+   - Presiona: `Ctrl + b`, luego suelta y presiona `d`.
+
+5. **Para volver a ver el progreso en cualquier momento:**
+   Abre una nueva ventana de WSL2 y escribe:
+   ```bash
+   tmux attach -t cmip6_job
+   ```
+
+---
+
+### 2. Configurar WSL2 para que no se apague al cerrar ventanas (Windows 11)
+
+Si utilizas **Windows 11**, puedes habilitar `systemd` en WSL2 para que mantenga todos los procesos en segundo plano activos de forma permanente:
+
+1. Edita o crea el archivo `/etc/wsl.conf` dentro de WSL2:
+   ```bash
+   sudo nano /etc/wsl.conf
+   ```
+
+2. Agrega las siguientes líneas:
+   ```ini
+   [boot]
+   systemd=true
+   ```
+
+3. Reinicia WSL2 desde PowerShell de Windows:
+   ```powershell
+   wsl --shutdown
+   ```
+
+A partir de ese momento, cualquier proceso iniciado con `tmux` o `./run_background.sh start` continuará ejecutándose en segundo plano en Windows, incluso si cierras todas las ventanas de terminal.
+
+---
+
+### 3. Lanzar el proceso en segundo plano directamente desde Windows (PowerShell / CMD)
+
+También puedes lanzar el proceso en segundo plano desde PowerShell de Windows sin mantener ninguna ventana de WSL abierta:
+
+```powershell
+# Iniciar en segundo plano sin bloquear la terminal de Windows:
+wsl -d Ubuntu --exec bash -c "cd /ruta/de/tu/proyecto && ./run_background.sh start"
+
+# Consultar el estado en cualquier momento:
+wsl -d Ubuntu --exec bash -c "cd /ruta/de/tu/proyecto && ./run_background.sh status"
+```
+
+---
+
 ## 📁 Estructura de Salida
 
 Los archivos NetCDF finales se organizan en carpetas individuales por modelo:

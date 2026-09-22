@@ -23,7 +23,7 @@
 #   - cdo (Climate Data Operators)
 #   - aria2c
 #   - sha256sum (o shasum)
-#   - awk, curl
+#   - awk, curl, tr
 #
 # Uso:
 # ----
@@ -74,7 +74,7 @@ check_dependencies() {
     echo "======================================================================"
 
     local missing=()
-    for cmd in aria2c cdo awk curl; do
+    for cmd in aria2c cdo awk curl tr; do
         if ! command -v "$cmd" &> /dev/null; then
             missing+=("$cmd")
         fi
@@ -95,7 +95,7 @@ check_dependencies() {
         echo ""
         echo "Instrucciones de instalación recomendadas:"
         echo "  - Entorno Conda / Mamba (Recomendado):"
-        echo "      conda install -c conda-forge cdo aria2 curl coreutils"
+        echo "      mamba install -c conda-forge cdo aria2 curl coreutils -y"
         echo "  - Ubuntu / Debian Linux:"
         echo "      sudo apt-get update && sudo apt-get install -y cdo aria2 curl coreutils"
         echo "  - RedHat / CentOS / Rocky Linux:"
@@ -155,8 +155,8 @@ main() {
     echo ""
 
     # Extraer combinaciones únicas de (source_id, variant_label, experiment_id, variable_id)
-    # Columnas TSV: 1:source_id, 2:variant_label, 3:experiment_id, 4:variable_id, 5:file_name, 6:https_url, 7:checksum, 8:checksum_type, 9:file_size_mb, 10:data_node
-    mapfile -t COMBOS < <(tail -n +2 "$MANIFEST" | awk -F'\t' '{print $1"\t"$2"\t"$3"\t"$4}' | sort -u)
+    # Limpiando posibles retornos de carro (\r) de Windows
+    mapfile -t COMBOS < <(tail -n +2 "$MANIFEST" | tr -d '\r' | awk -F'\t' '{print $1"\t"$2"\t"$3"\t"$4}' | sort -u)
 
     total_combos=${#COMBOS[@]}
     current_idx=0
@@ -167,8 +167,14 @@ main() {
     echo ""
 
     for combo in "${COMBOS[@]}"; do
-        ((current_idx++))
+        current_idx=$((current_idx + 1))
         IFS=$'\t' read -r model variant exp var <<< "$combo"
+
+        # Limpiar cualquier caracter de retorno invisible
+        model=$(echo "$model" | tr -d '\r')
+        variant=$(echo "$variant" | tr -d '\r')
+        exp=$(echo "$exp" | tr -d '\r')
+        var=$(echo "$var" | tr -d '\r')
 
         # Determinar el rango temporal esperado según el experimento
         if [ "$exp" == "historical" ]; then
@@ -197,7 +203,7 @@ main() {
                 file_size_h=$(du -h "$final_file" | cut -f1)
                 echo " [OMITIDO] El archivo final ya existe y es válido ($file_size_h):"
                 echo "           $final_file"
-                ((skipped_count++))
+                skipped_count=$((skipped_count + 1))
                 continue
             else
                 echo " [AVISO] Archivo existente corrupto o incompleto. Se reprocesará:"
@@ -222,11 +228,16 @@ main() {
         > "$aria2_input"
 
         # Filtrar los archivos de esta combinación desde el manifiesto TSV
-        tail -n +2 "$MANIFEST" | awk -F'\t' -v m="$model" -v v="$variant" -v e="$exp" -v va="$var" '
+        tail -n +2 "$MANIFEST" | tr -d '\r' | awk -F'\t' -v m="$model" -v v="$variant" -v e="$exp" -v va="$var" '
             $1 == m && $2 == v && $3 == e && $4 == va {
                 print $5"\t"$6"\t"$7"\t"$8"\t"$9
             }
         ' | while IFS=$'\t' read -r fname url chk chk_type sz; do
+            fname=$(echo "$fname" | tr -d '\r')
+            url=$(echo "$url" | tr -d '\r')
+            chk=$(echo "$chk" | tr -d '\r')
+            chk_type=$(echo "$chk_type" | tr -d '\r')
+
             echo "$url" >> "$aria2_input"
             echo "  dir=$raw_dir" >> "$aria2_input"
             echo "  out=$fname" >> "$aria2_input"
@@ -305,7 +316,7 @@ main() {
 
         file_size_final=$(du -h "$final_file" | cut -f1)
         echo " [4/4 COMPLETADO] ✅ Guardado exitosamente: $final_file ($file_size_final)"
-        ((processed_count++))
+        processed_count=$((processed_count + 1))
     done
 
     # Limpiar directorio temporal global si quedó vacío
