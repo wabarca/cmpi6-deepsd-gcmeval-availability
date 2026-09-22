@@ -73,15 +73,18 @@ except ImportError:
 # Endpoint utilizado por MetaGrid para consultar el índice ESGF Solr
 BASE_URL = "https://metagrid.esgf-west.org/proxy/search"
 
-# Variables atmosféricas de interés
+# Variables atmosféricas y de superficie de interés
 VARIABLES = [
-    "ua",   # Viento zonal
-    "va",   # Viento meridional
-    "ta",   # Temperatura del aire
-    "hur",  # Humedad relativa
-    "hus",  # Humedad específica
-    "zg",   # Altura geopotencial
-    "psl",  # Presión reducida al nivel del mar
+    "ua",      # Viento zonal
+    "va",      # Viento meridional
+    "ta",      # Temperatura del aire
+    "hur",     # Humedad relativa
+    "hus",     # Humedad específica
+    "zg",      # Altura geopotencial
+    "psl",     # Presión reducida al nivel del mar
+    "tasmax",  # Temperatura máxima diaria del aire en superficie
+    "tasmin",  # Temperatura mínima diaria del aire en superficie
+    "pr",      # Precipitación diaria
 ]
 
 # Experimentos CMIP6 considerados
