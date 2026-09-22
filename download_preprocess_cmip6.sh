@@ -159,7 +159,7 @@ remote_file_exists() {
 
     # Comprobar primero en host remoto mediante SSH (compatible con Windows OpenSSH y Linux)
     if ssh -p "$REMOTE_SSH_PORT" -o ConnectTimeout=8 -o BatchMode=yes "$SSH_TARGET" \
-       "cmd.exe /c if exist \"${REMOTE_DEST_DIR}\\${model}\\${fname}\" (exit 0) else (exit 1) 2>nul || powershell -NoProfile -Command \"if ((Get-Item -Path '${REMOTE_DEST_DIR}/${model}/${fname}' -ErrorAction SilentlyContinue).Length -gt 0) { exit 0 } else { exit 1 }\" 2>nul || test -s \"${REMOTE_DEST_DIR}/${model}/${fname}\" 2>/dev/null" 2>/dev/null; then
+       "cmd.exe /c if exist \"${REMOTE_DEST_DIR}\\${model}\\${fname}\" (exit 0) else (exit 1) >nul 2>&1 || powershell -NoProfile -Command \"if ((Get-Item -Path '${REMOTE_DEST_DIR}/${model}/${fname}' -ErrorAction SilentlyContinue).Length -gt 0) { exit 0 } else { exit 1 }\" >nul 2>&1 || test -s \"${REMOTE_DEST_DIR}/${model}/${fname}\" >/dev/null 2>&1" >/dev/null 2>&1; then
         return 0
     fi
 
@@ -181,23 +181,22 @@ transfer_and_cleanup() {
     if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
         echo " [TRANSFERENCIA] 🚀 Enviando $fname a ${SSH_TARGET}:${REMOTE_DEST_DIR}/${model}/ ..."
 
-        # Crear carpeta remota de destino (Windows cmd / PowerShell / Linux mkdir)
+        # Crear carpeta remota de destino silenciosamente (compatible con Windows OpenSSH y Linux)
         ssh -p "$REMOTE_SSH_PORT" -o ConnectTimeout=10 "$SSH_TARGET" \
-            "cmd.exe /c if not exist \"${REMOTE_DEST_DIR}\\${model}\" mkdir \"${REMOTE_DEST_DIR}\\${model}\" 2>nul || powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '${REMOTE_DEST_DIR}/${model}'\" 2>nul || mkdir -p \"${REMOTE_DEST_DIR}/${model}\" 2>/dev/null" 2>/dev/null || true
+            "cmd.exe /c if not exist \"${REMOTE_DEST_DIR}\\${model}\" mkdir \"${REMOTE_DEST_DIR}\\${model}\" >nul 2>&1 || powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '${REMOTE_DEST_DIR}/${model}' | Out-Null\" >nul 2>&1 || mkdir -p \"${REMOTE_DEST_DIR}/${model}\" >/dev/null 2>&1" >/dev/null 2>&1 || true
 
         local transfer_success=false
 
-        # 1. Intentar rsync primero (si rsync está disponible en local y remoto)
-        if command -v rsync &>/dev/null; then
-            if rsync -avP --inplace -e "ssh -p $REMOTE_SSH_PORT -o ConnectTimeout=15" "$local_file" "${SSH_TARGET}:\"${REMOTE_DEST_DIR}/${model}/\"" 2>/dev/null; then
+        # 1. Transferencia nativa con scp (100% compatible con Windows OpenSSH sin requerir rsync en Windows)
+        if command -v scp &>/dev/null; then
+            if scp -P "$REMOTE_SSH_PORT" -o ConnectTimeout=30 -o BatchMode=yes "$local_file" "${SSH_TARGET}:\"${REMOTE_DEST_DIR}/${model}/${fname}\""; then
                 transfer_success=true
             fi
         fi
 
-        # 2. Fallback a scp (ideal y compatible nativo con Windows OpenSSH)
-        if [ "$transfer_success" = false ]; then
-            echo " [TRANSFERENCIA] Usando scp para transferir a ${SSH_TARGET}..."
-            if scp -P "$REMOTE_SSH_PORT" -o ConnectTimeout=20 "$local_file" "${SSH_TARGET}:\"${REMOTE_DEST_DIR}/${model}/${fname}\""; then
+        # 2. Fallback con rsync si scp no estuviera disponible
+        if [ "$transfer_success" = false ] && command -v rsync &>/dev/null; then
+            if rsync -avP --inplace -e "ssh -p $REMOTE_SSH_PORT -o ConnectTimeout=20" "$local_file" "${SSH_TARGET}:\"${REMOTE_DEST_DIR}/${model}/\"" >/dev/null 2>&1; then
                 transfer_success=true
             fi
         fi
