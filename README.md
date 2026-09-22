@@ -47,35 +47,47 @@ Este repositorio contiene las herramientas automatizadas para:
 
 ## ⚙️ Requisitos y Dependencias
 
-### 1. Entorno Python (Recomendado vía Conda / Mamba)
+### 1. Entorno Python y Herramientas CLI (Recomendado vía Mamba / Conda)
 
-Se recomienda utilizar un entorno Conda (ej. `climate`) con Python 3.9 o superior:
+Se recomienda utilizar **Mamba** (o **Conda**) por su rapidez en la resolución de paquetes de clima (`cdo`, `aria2`, `openpyxl`).
+
+#### Opción A: Usando Mamba (Recomendado por velocidad)
 
 ```bash
-# Crear y activar entorno
+# 1. Crear y activar el entorno con todas las dependencias en un solo paso
+mamba create -n climate python=3.11 requests pandas openpyxl urllib3 cdo aria2 curl coreutils -c conda-forge -y
+mamba activate climate
+```
+
+#### Opción B: Usando Conda
+
+```bash
+# 1. Crear y activar entorno
 conda create -n climate python=3.11 -y
 conda activate climate
 
-# Instalar dependencias de Python
-conda install -c conda-forge requests pandas openpyxl urllib3 -y
+# 2. Instalar paquetes de Python y herramientas CLI
+conda install -c conda-forge requests pandas openpyxl urllib3 cdo aria2 curl coreutils -y
 ```
 
 ### 2. Herramientas del Sistema (CLI)
 
-Para el pipeline de descarga y preprocesamiento se requieren:
-- **`cdo`** (Climate Data Operators con soporte OpenMP)
-- **`aria2c`** (Gestor de descargas multiproceso)
-- **`sha256sum`** o **`shasum`** (Verificación de integridad)
+El pipeline automatizado de descarga y preprocesamiento utiliza:
+- **`cdo`** (Climate Data Operators con soporte multi-hilo OpenMP)
+- **`aria2c`** (Gestor de descargas aceleradas multiproceso y validación de hash)
+- **`sha256sum`** o **`shasum`** (Verificación de integridad de archivos NetCDF)
 - **`curl`**, **`awk`**, **`coreutils`**
 
-**Instalación rápida en Conda:**
-```bash
-conda install -c conda-forge cdo aria2 curl coreutils -y
-```
+Si trabajas directamente en sistemas Linux sin Conda/Mamba:
 
-**Instalación en Linux (Ubuntu / Debian):**
+**En Ubuntu / Debian Linux:**
 ```bash
 sudo apt-get update && sudo apt-get install -y cdo aria2 curl coreutils
+```
+
+**En RedHat / CentOS / Rocky Linux:**
+```bash
+sudo dnf install -y epel-release && sudo dnf install -y cdo aria2 curl coreutils
 ```
 
 ---
