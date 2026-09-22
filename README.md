@@ -240,22 +240,29 @@ MAX_DOWNLOAD_LIMIT=0 \
 
 ## 🔑 Configuración de Transferencia Remota (SSH sin contraseña)
 
-Para que el script pueda transferir automáticamente los archivos a la PC de almacenamiento (`192.168.4.27`) sin pedir contraseña en cada variable:
+Para que el script pueda transferir automáticamente los archivos a la PC de almacenamiento (`192.168.4.27`) con el usuario de dominio `AMBIENTE\wabarca` sin pedir contraseña en cada variable:
 
-1. **Generar clave SSH en la PC de descarga (si no existe):**
+1. **Configurar el cliente SSH en la PC de descarga (`~/.ssh/config`):**
+   Agrega las siguientes líneas a tu archivo `~/.ssh/config`:
+   ```text
+   Host 192.168.4.27
+       User AMBIENTE\wabarca
+       Port 22
+   ```
+
+2. **Generar clave SSH en la PC de descarga (si no existe):**
    ```bash
    ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
    ```
 
-2. **Copiar la clave pública a la PC de almacenamiento (192.168.4.27):**
-   ```bash
-   ssh-copy-id usuario@192.168.4.27
-   ```
-   *(Si el servidor SSH remoto es Windows OpenSSH, asegúrate de que la clave esté agregada a `C:\Users\usuario\.ssh\authorized_keys` o `C:\ProgramData\ssh\administrators_authorized_keys`).*
+3. **Copiar la clave pública a la PC de almacenamiento Windows:**
+   - La clave pública (`~/.ssh/id_ed25519.pub`) debe agregarse al archivo:
+     - Si el usuario `wabarca` es usuario estándar: `C:\Users\wabarca\.ssh\authorized_keys`
+     - Si el usuario `wabarca` pertenece al grupo Administradores: `C:\ProgramData\ssh\administrators_authorized_keys` (con permisos de lectura exclusivos para SYSTEM y Administrators).
 
-3. **Verificar conexión sin contraseña:**
+4. **Verificar la conexión:**
    ```bash
-   ssh usuario@192.168.4.27 "echo Conexión exitosa"
+   ssh "AMBIENTE\wabarca@192.168.4.27" "echo Conexión exitosa"
    ```
 
 ---

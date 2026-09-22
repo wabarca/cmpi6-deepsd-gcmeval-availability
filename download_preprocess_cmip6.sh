@@ -153,28 +153,31 @@ remote_file_exists() {
     local fname="$2"
 
     if [ "$ENABLE_REMOTE_SYNC" != "true" ]; then
-        [ -f "${LOCAL_OUTPUT_DIR}/${model}/${fname}" ] && [ -s "${LOCAL_OUTPUT_DIR}/${model}/${fname}" ]
-        return $?
+        return 1
     fi
 
-    # Comprobar primero en host remoto mediante SSH (compatible con Windows OpenSSH y Linux)
+    # Comprobar en host remoto mediante SSH (compatible con Windows OpenSSH y Linux)
     if ssh -p "$REMOTE_SSH_PORT" -o ConnectTimeout=8 -o BatchMode=yes "$SSH_TARGET" \
        "cmd.exe /c if exist \"${REMOTE_DEST_DIR}\\${model}\\${fname}\" (exit 0) else (exit 1) >nul 2>&1 || powershell -NoProfile -Command \"if ((Get-Item -Path '${REMOTE_DEST_DIR}/${model}/${fname}' -ErrorAction SilentlyContinue).Length -gt 0) { exit 0 } else { exit 1 }\" >nul 2>&1 || test -s \"${REMOTE_DEST_DIR}/${model}/${fname}\" >/dev/null 2>&1" >/dev/null 2>&1; then
-        return 0
-    fi
-
-    # Comprobar si ya existe localmente
-    if [ -f "${LOCAL_OUTPUT_DIR}/${model}/${fname}" ] && [ -s "${LOCAL_OUTPUT_DIR}/${model}/${fname}" ]; then
         return 0
     fi
 
     return 1
 }
 
+local_file_exists() {
+    local model="$1"
+    local fname="$2"
+    local f_path="${LOCAL_OUTPUT_DIR}/${model}/${fname}"
+
+    [ -f "$f_path" ] && [ -s "$f_path" ]
+    return $?
+}
+
 transfer_and_cleanup() {
     local local_file="$1"
     local model="$2"
-    local temp_var_dir="$3"
+    local temp_var_dir="${3:-}"
     local fname
     fname=$(basename "$local_file")
 
@@ -201,6 +204,11 @@ transfer_and_cleanup() {
             fi
         fi
 
+        # Eliminar carpeta temporal con archivos brutos si fue provista
+        if [ -n "$temp_var_dir" ] && [ -d "$temp_var_dir" ]; then
+            rm -rf "$temp_var_dir"
+        fi
+
         if [ "$transfer_success" = true ]; then
             echo " [TRANSFERENCIA] ✅ Archivo $fname transferido con éxito al almacenamiento remoto."
             # Limpiar archivo local procesado para liberar disco
@@ -208,13 +216,17 @@ transfer_and_cleanup() {
                 rm -f "$local_file"
                 echo " [LIMPIEZA] 🗑️  Archivo local procesado eliminado."
             fi
+            return 0
         else
             echo " [ERROR TRANSFERENCIA] ⚠️ No se pudo transferir $fname a ${SSH_TARGET}. Se conserva el archivo local en $local_file"
+            return 1
+        fi
+    else
+        # Si no hay sincronización remota, solo limpiar la carpeta temporal
+        if [ -n "$temp_var_dir" ] && [ -d "$temp_var_dir" ]; then
+            rm -rf "$temp_var_dir"
         fi
     fi
-
-    # Eliminar carpeta temporal con archivos brutos
-    rm -rf "$temp_var_dir"
 }
 
 # ------------------------------------------------------------------------------
@@ -351,13 +363,34 @@ main() {
         echo "[$current_idx/$total_combos] Modelo: $model | Variante: $variant | Exp: $exp | Var: $var"
 
         # ----------------------------------------------------------------------
-        # A. Comprobación de Reanudación (Resume / Idempotencia)
+        # A. Comprobación de Reanudación y Sincronización de Pendientes
         # ----------------------------------------------------------------------
+        # 1. Si ya existe en el servidor remoto, omitir completamente
         if remote_file_exists "$model" "$final_fname"; then
-            echo " [OMITIDO] El archivo ya existe en el almacenamiento remoto/local:"
+            echo " [OMITIDO] El archivo ya existe en el almacenamiento remoto:"
             echo "           $final_fname"
+            # Si quedó una copia local residual, limpiarla para liberar espacio
+            if [ "$CLEANUP_LOCAL_AFTER_SYNC" == "true" ] && [ -f "$final_file" ]; then
+                rm -f "$final_file"
+            fi
             skipped_count=$((skipped_count + 1))
             continue
+        fi
+
+        # 2. Si ya existe localmente pero NO en el remoto:
+        if local_file_exists "$model" "$final_fname"; then
+            if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
+                echo " [SINCRONIZACIÓN PENDIENTE] 🔄 Archivo ya procesado localmente. Transfiriendo a servidor remoto..."
+                if transfer_and_cleanup "$final_file" "$model" ""; then
+                    processed_count=$((processed_count + 1))
+                fi
+                continue
+            else
+                echo " [OMITIDO] El archivo ya existe localmente:"
+                echo "           $final_fname"
+                skipped_count=$((skipped_count + 1))
+                continue
+            fi
         fi
 
         # ----------------------------------------------------------------------
