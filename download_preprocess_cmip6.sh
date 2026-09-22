@@ -53,7 +53,7 @@ LOCAL_OUTPUT_DIR="${LOCAL_OUTPUT_DIR:-./CMIP6_GCMs_Processed}"
 # ------------------------------------------------------------------------------
 ENABLE_REMOTE_SYNC="${ENABLE_REMOTE_SYNC:-true}"
 REMOTE_HOST="${REMOTE_HOST:-192.168.4.27}"
-REMOTE_USER="${REMOTE_USER:-}" # Dejar vacío si el usuario SSH coincide o está en ~/.ssh/config
+REMOTE_USER="${REMOTE_USER:-AMBIENTE\\wabarca}" # Dejar vacío si el usuario SSH coincide o está en ~/.ssh/config
 REMOTE_DEST_DIR="${REMOTE_DEST_DIR:-E:/CMIP6/CMIP6_GCMs_Processed}"
 REMOTE_SSH_PORT="${REMOTE_SSH_PORT:-22}"
 
@@ -157,9 +157,9 @@ remote_file_exists() {
         return $?
     fi
 
-    # Comprobar primero en host remoto mediante SSH
-    if ssh -p "$REMOTE_SSH_PORT" -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" \
-       "test -s \"${REMOTE_DEST_DIR}/${model}/${fname}\" || (powershell -Command \"if ((Get-Item -Path '${REMOTE_DEST_DIR}/${model}/${fname}' -ErrorAction SilentlyContinue).Length -gt 0) { exit 0 } else { exit 1 }\" 2>/dev/null)" 2>/dev/null; then
+    # Comprobar primero en host remoto mediante SSH (compatible con Windows OpenSSH y Linux)
+    if ssh -p "$REMOTE_SSH_PORT" -o ConnectTimeout=8 -o BatchMode=yes "$SSH_TARGET" \
+       "cmd.exe /c if exist \"${REMOTE_DEST_DIR}\\${model}\\${fname}\" (exit 0) else (exit 1) 2>nul || powershell -NoProfile -Command \"if ((Get-Item -Path '${REMOTE_DEST_DIR}/${model}/${fname}' -ErrorAction SilentlyContinue).Length -gt 0) { exit 0 } else { exit 1 }\" 2>nul || test -s \"${REMOTE_DEST_DIR}/${model}/${fname}\" 2>/dev/null" 2>/dev/null; then
         return 0
     fi
 
@@ -181,22 +181,36 @@ transfer_and_cleanup() {
     if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
         echo " [TRANSFERENCIA] 🚀 Enviando $fname a ${SSH_TARGET}:${REMOTE_DEST_DIR}/${model}/ ..."
 
-        # Crear carpeta remota de destino
+        # Crear carpeta remota de destino (Windows cmd / PowerShell / Linux mkdir)
         ssh -p "$REMOTE_SSH_PORT" -o ConnectTimeout=10 "$SSH_TARGET" \
-            "mkdir -p \"${REMOTE_DEST_DIR}/${model}\" 2>/dev/null || powershell -Command \"New-Item -ItemType Directory -Force -Path '${REMOTE_DEST_DIR}/${model}'\"" 2>/dev/null || true
+            "cmd.exe /c if not exist \"${REMOTE_DEST_DIR}\\${model}\" mkdir \"${REMOTE_DEST_DIR}\\${model}\" 2>nul || powershell -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '${REMOTE_DEST_DIR}/${model}'\" 2>nul || mkdir -p \"${REMOTE_DEST_DIR}/${model}\" 2>/dev/null" 2>/dev/null || true
 
-        # Transferencia optimizada con rsync o fallback a scp
+        local transfer_success=false
+
+        # 1. Intentar rsync primero (si rsync está disponible en local y remoto)
         if command -v rsync &>/dev/null; then
-            rsync -avP --inplace -e "ssh -p $REMOTE_SSH_PORT" "$local_file" "${SSH_TARGET}:\"${REMOTE_DEST_DIR}/${model}/\""
-        else
-            scp -P "$REMOTE_SSH_PORT" "$local_file" "${SSH_TARGET}:\"${REMOTE_DEST_DIR}/${model}/${fname}\""
+            if rsync -avP --inplace -e "ssh -p $REMOTE_SSH_PORT -o ConnectTimeout=15" "$local_file" "${SSH_TARGET}:\"${REMOTE_DEST_DIR}/${model}/\"" 2>/dev/null; then
+                transfer_success=true
+            fi
         fi
 
-        echo " [TRANSFERENCIA] ✅ Archivo transferido con éxito al servidor de almacenamiento."
+        # 2. Fallback a scp (ideal y compatible nativo con Windows OpenSSH)
+        if [ "$transfer_success" = false ]; then
+            echo " [TRANSFERENCIA] Usando scp para transferir a ${SSH_TARGET}..."
+            if scp -P "$REMOTE_SSH_PORT" -o ConnectTimeout=20 "$local_file" "${SSH_TARGET}:\"${REMOTE_DEST_DIR}/${model}/${fname}\""; then
+                transfer_success=true
+            fi
+        fi
 
-        # Limpiar archivo local procesado para liberar disco
-        if [ "$CLEANUP_LOCAL_AFTER_SYNC" == "true" ]; then
-            rm -f "$local_file"
+        if [ "$transfer_success" = true ]; then
+            echo " [TRANSFERENCIA] ✅ Archivo $fname transferido con éxito al almacenamiento remoto."
+            # Limpiar archivo local procesado para liberar disco
+            if [ "$CLEANUP_LOCAL_AFTER_SYNC" == "true" ]; then
+                rm -f "$local_file"
+                echo " [LIMPIEZA] 🗑️  Archivo local procesado eliminado."
+            fi
+        else
+            echo " [ERROR TRANSFERENCIA] ⚠️ No se pudo transferir $fname a ${SSH_TARGET}. Se conserva el archivo local en $local_file"
         fi
     fi
 
@@ -229,7 +243,10 @@ process_variable_worker() {
         if [ -f "$r_file" ]; then
             fn=$(basename "$r_file")
             c_file="${clipped_dir}/${fn%.*}_clipped.nc"
-            cdo -P "$CDO_THREADS" -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file"
+            if ! cdo -P "$CDO_THREADS" -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file" 2>/dev/null; then
+                echo " [CDO AVISO] Falló recorte con -P, reintentando modo estándar para $fn..."
+                cdo -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file"
+            fi
         fi
     done
 
@@ -240,18 +257,20 @@ process_variable_worker() {
     if [ ${#clipped_files[@]} -eq 1 ]; then
         cp "${clipped_files[0]}" "$merged_temp"
     else
-        cdo -P "$CDO_THREADS" -s mergetime "${clipped_dir}"/*.nc "$merged_temp"
+        cdo -P "$CDO_THREADS" -s mergetime "${clipped_dir}"/*.nc "$merged_temp" 2>/dev/null || \
+        cdo -s mergetime "${clipped_dir}"/*.nc "$merged_temp"
     fi
 
     local temp_final="${var_temp_dir}/${fname_final}"
-    cdo -P "$CDO_THREADS" -s selyear,"$selyear_range" "$merged_temp" "$temp_final"
+    cdo -P "$CDO_THREADS" -s selyear,"$selyear_range" "$merged_temp" "$temp_final" 2>/dev/null || \
+    cdo -s selyear,"$selyear_range" "$merged_temp" "$temp_final"
 
     # Verificar que el NetCDF final sea válido
     if cdo -s sinfo "$temp_final" &>/dev/null; then
         mkdir -p "$(dirname "$final_file")"
         mv "$temp_final" "$final_file"
         local f_sz
-        f_sz=$(du -h "$final_file" | cut -f1)
+        f_sz=$(du -h "$final_file" 2>/dev/null | cut -f1 || echo "OK")
         echo " [CDO PROCESO] ✅ CDO completado para $fname_final ($f_sz)"
 
         # Transferir a PC de almacenamiento y limpiar
@@ -403,7 +422,9 @@ main() {
         # ----------------------------------------------------------------------
         if [ -n "$BG_PROC_PID" ]; then
             echo " [PIPELINE] ⏳ Esperando finalización del procesamiento/transferencia anterior (PID: $BG_PROC_PID)..."
-            wait "$BG_PROC_PID"
+            if ! wait "$BG_PROC_PID"; then
+                echo " [ADVERTENCIA] El procesamiento/transferencia anterior (PID: $BG_PROC_PID) finalizó con advertencias o error. Continuando con la siguiente variable..."
+            fi
             BG_PROC_PID=""
         fi
 
@@ -422,7 +443,9 @@ main() {
     if [ -n "$BG_PROC_PID" ]; then
         echo ""
         echo " [PIPELINE] ⏳ Esperando que finalice el último bloque de procesamiento/transferencia (PID: $BG_PROC_PID)..."
-        wait "$BG_PROC_PID"
+        if ! wait "$BG_PROC_PID"; then
+            echo " [ADVERTENCIA] El último proceso de procesamiento/transferencia finalizó con advertencias."
+        fi
         echo " [PIPELINE] ✅ Todos los procesos en segundo plano han finalizado."
     fi
 
