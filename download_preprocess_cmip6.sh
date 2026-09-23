@@ -61,6 +61,14 @@ REMOTE_SSH_PORT="${REMOTE_SSH_PORT:-22}"
 CLEANUP_LOCAL_AFTER_SYNC="${CLEANUP_LOCAL_AFTER_SYNC:-true}"
 
 # ------------------------------------------------------------------------------
+# Períodos de Interés Configurables (Personalizables según el proyecto)
+# ------------------------------------------------------------------------------
+HISTORICAL_START_YEAR="${HISTORICAL_START_YEAR:-1950}"
+HISTORICAL_END_YEAR="${HISTORICAL_END_YEAR:-2014}"
+SSP_START_YEAR="${SSP_START_YEAR:-2015}"
+SSP_END_YEAR="${SSP_END_YEAR:-2100}"
+
+# ------------------------------------------------------------------------------
 # Parámetros de Recorte CDO y Rendimiento
 # ------------------------------------------------------------------------------
 # Coordenadas geográficas para recorte de Centroamérica (sellonlatbox)
@@ -323,6 +331,8 @@ main() {
     echo " Manifiesto           : $MANIFEST"
     echo " Hilos CDO (-P)       : $CDO_THREADS CPUs (Máximo rendimiento)"
     echo " Dominio sellonlatbox : [lon: $LON_LEFT a $LON_RIGHT, lat: $LAT_DOWN a $LAT_UP]"
+    echo " Período Historical   : $HISTORICAL_START_YEAR a $HISTORICAL_END_YEAR"
+    echo " Período Escenarios   : $SSP_START_YEAR a $SSP_END_YEAR"
     echo " Límite ancho banda   : $([ "$MAX_DOWNLOAD_LIMIT" == "0" ] && echo "Libre / Sin límite" || echo "$MAX_DOWNLOAD_LIMIT")"
     if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
         echo " Sincronización SSH   : ACTIVADA"
@@ -357,11 +367,11 @@ main() {
         var=$(echo "$var" | tr -d '\r')
 
         if [ "$exp" == "historical" ]; then
-            period_label="19500101-20141231"
-            selyear_range="1950/2014"
+            period_label="${HISTORICAL_START_YEAR}0101-${HISTORICAL_END_YEAR}1231"
+            selyear_range="${HISTORICAL_START_YEAR}/${HISTORICAL_END_YEAR}"
         else
-            period_label="20150101-21001231"
-            selyear_range="2015/2100"
+            period_label="${SSP_START_YEAR}0101-${SSP_END_YEAR}1231"
+            selyear_range="${SSP_START_YEAR}/${SSP_END_YEAR}"
         fi
 
         final_fname="${var}_day_${model}_${exp}_${variant}_${period_label}.nc"

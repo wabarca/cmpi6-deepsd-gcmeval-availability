@@ -51,6 +51,7 @@ import os
 import sys
 import json
 import time
+import re
 from urllib.parse import quote
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -96,6 +97,16 @@ EXPERIMENTS = [
     "ssp585",
 ]
 
+# Periodos de Interés Configurables por Experimento (Start Year, End Year)
+# Pueden modificarse según los requerimientos del proyecto
+PERIOD_RANGES = {
+    "historical": (1950, 2014),
+    "ssp126": (2015, 2100),
+    "ssp245": (2015, 2100),
+    "ssp370": (2015, 2100),
+    "ssp585": (2015, 2100),
+}
+
 # Frecuencia temporal requerida
 TABLE_ID = "day"
 
@@ -105,6 +116,72 @@ FILES_PAGE_SIZE = 1000
 
 # Concurrencia para consultas de archivos (hilos de red)
 MAX_WORKERS = 6
+
+
+def extract_file_years(file_name):
+    """
+    Extrae el año de inicio y fin desde el nombre estándar de un archivo NetCDF CMIP6.
+    Ejemplos:
+        hur_day_ACCESS-CM2_historical_r1i1p1f1_gn_19500101-19541231.nc -> (1950, 1954)
+        pr_day_ACCESS-CM2_ssp126_r1i1p1f1_gn_22510101-23001231.nc -> (2251, 2300)
+    """
+    m = re.search(r'_(\d{4,8})-(\d{4,8})\.nc$', str(file_name))
+    if m:
+        s_str, e_str = m.group(1), m.group(2)
+        return int(s_str[:4]), int(e_str[:4])
+    return None, None
+
+
+def extract_dataset_years(doc):
+    """
+    Extrae el año de inicio y fin desde un documento Solr de tipo Dataset.
+    Intenta leer datetime_start, datetime_stop / datetime_end o campos de texto.
+    """
+    d_start = first(doc.get("datetime_start"))
+    d_stop = first(doc.get("datetime_stop")) or first(doc.get("datetime_end"))
+    s_yr, e_yr = None, None
+    if d_start:
+        m = re.match(r'^(\d{4})', str(d_start).strip())
+        if m:
+            s_yr = int(m.group(1))
+    if d_stop:
+        m = re.match(r'^(\d{4})', str(d_stop).strip())
+        if m:
+            e_yr = int(m.group(1))
+    if s_yr is None or e_yr is None:
+        inst = first(doc.get("instance_id")) or first(doc.get("id")) or first(doc.get("title")) or ""
+        m_inst = re.search(r'_(\d{4,8})-(\d{4,8})', str(inst))
+        if m_inst:
+            if s_yr is None:
+                s_yr = int(m_inst.group(1)[:4])
+            if e_yr is None:
+                e_yr = int(m_inst.group(2)[:4])
+    return s_yr, e_yr
+
+
+def is_dataset_in_period(doc, experiment_id, period_ranges=None):
+    """
+    Verifica si un dataset ESGF intersecta con el período de interés configurado
+    para el experimento dado.
+    """
+    ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
+    req_range = ranges.get(experiment_id)
+    if not req_range:
+        return True
+
+    s_yr, e_yr = extract_dataset_years(doc)
+    if s_yr is None and e_yr is None:
+        # Si ESGF no proporciona metadatos temporales a nivel de dataset, no descartar
+        return True
+
+    req_start, req_end = req_range
+    if s_yr is not None and e_yr is not None:
+        return (s_yr <= req_end and e_yr >= req_start)
+    elif s_yr is not None:
+        return s_yr <= req_end
+    elif e_yr is not None:
+        return e_yr >= req_start
+    return True
 
 
 def get_http_session(retries=3, backoff_factor=0.5):
@@ -252,9 +329,16 @@ def fetch_variable_experiment(variable, experiment, session=None):
     return docs_all, num_found_total
 
 
-def build_inventory(session=None):
+def build_inventory(session=None, period_ranges=None):
     """
-    Construye la matriz de disponibilidad a nivel de dataset.
+    Construye la matriz de disponibilidad a nivel de dataset considerando
+    únicamente aquellos datasets que cubren o intersectan el período de interés.
+
+    Parameters
+    ----------
+    session : requests.Session, optional
+    period_ranges : dict, optional
+        Diccionario con rangos (año_inicio, año_fin) por experimento.
 
     Returns
     -------
@@ -265,11 +349,15 @@ def build_inventory(session=None):
     inventory = defaultdict(set)
     total_numfound = 0
     total_downloaded = 0
+    discarded_out_of_period = 0
+
+    ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
 
     for experiment in EXPERIMENTS:
         print()
         print("=" * 70)
-        print(f"Procesando experimento: {experiment}")
+        req_p = ranges.get(experiment, "Sin filtro")
+        print(f"Procesando experimento: {experiment} (Período de interés: {req_p})")
         print("=" * 70)
 
         for variable in VARIABLES:
@@ -283,21 +371,26 @@ def build_inventory(session=None):
             total_numfound += num_found
             total_downloaded += len(docs)
 
+            valid_in_period = 0
+            for doc in docs:
+                if is_dataset_in_period(doc, experiment, period_ranges=ranges):
+                    source_id = first(doc.get("source_id"))
+                    variant_label = first(doc.get("variant_label"))
+                    experiment_id = first(doc.get("experiment_id"))
+                    variable_id = first(doc.get("variable_id"))
+
+                    key = (source_id, variant_label, experiment_id)
+                    inventory[key].add(variable_id)
+                    valid_in_period += 1
+                else:
+                    discarded_out_of_period += 1
+
             print(
                 f"{experiment:10s} "
                 f"{variable:5s} "
                 f"numFound={num_found:5d} "
-                f"downloaded={len(docs):5d}"
+                f"en_periodo={valid_in_period:5d}"
             )
-
-            for doc in docs:
-                source_id = first(doc.get("source_id"))
-                variant_label = first(doc.get("variant_label"))
-                experiment_id = first(doc.get("experiment_id"))
-                variable_id = first(doc.get("variable_id"))
-
-                key = (source_id, variant_label, experiment_id)
-                inventory[key].add(variable_id)
 
     rows = []
     for key, vars_found in inventory.items():
@@ -321,17 +414,19 @@ def build_inventory(session=None):
     stats = {
         "total_numfound": total_numfound,
         "total_downloaded": total_downloaded,
+        "discarded_out_of_period": discarded_out_of_period,
         "inventory_rows": len(df),
         "unique_models": df["source_id"].nunique() if not df.empty else 0,
     }
 
     print()
     print("=" * 70)
-    print("RESUMEN ESGF (DATASETS)")
+    print("RESUMEN ESGF (DATASETS EN PERÍODO DE INTERÉS)")
     print("=" * 70)
     print(f"Documentos reportados por ESGF : {stats['total_numfound']:,}")
     print(f"Documentos descargados         : {stats['total_downloaded']:,}")
-    print(f"Filas inventario              : {stats['inventory_rows']:,}")
+    print(f"Datasets fuera de período      : {stats['discarded_out_of_period']:,}")
+    print(f"Filas inventario válidas      : {stats['inventory_rows']:,}")
     print(f"Modelos únicos                : {stats['unique_models']:,}")
     print("=" * 70)
     print()
@@ -495,10 +590,11 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
     }
 
 
-def fetch_files_for_combination(source_id, variant_label, experiment_id, variable_id, session=None):
+def fetch_files_for_combination(source_id, variant_label, experiment_id, variable_id, session=None, period_ranges=None):
     """
     Consulta a ESGF Solr todos los archivos NetCDF correspondientes a una combinación
-    específica de modelo, variante, experimento y variable.
+    específica de modelo, variante, experimento y variable, aplicando filtrado por
+    período de interés.
 
     Maneja réplicas entre diferentes data nodes seleccionando para cada archivo
     físico único la copia con mayor prioridad (Globus HTTPS > HTTPS > HTTP).
@@ -510,6 +606,7 @@ def fetch_files_for_combination(source_id, variant_label, experiment_id, variabl
     experiment_id : str
     variable_id : str
     session : requests.Session, optional
+    period_ranges : dict, optional
 
     Returns
     -------
@@ -575,15 +672,34 @@ def fetch_files_for_combination(source_id, variant_label, experiment_id, variabl
             if parsed["priority_rank"] > best_file_by_name[fname]["priority_rank"]:
                 best_file_by_name[fname] = parsed
 
+    # Filtrar por período de interés si está configurado
+    ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
+    req_range = ranges.get(experiment_id)
+
+    filtered_files = []
+    for f in best_file_by_name.values():
+        s_yr, e_yr = extract_file_years(f["file_name"])
+        f["start_year"] = s_yr
+        f["end_year"] = e_yr
+
+        if req_range and s_yr is not None and e_yr is not None:
+            req_start, req_end = req_range
+            # Comprobar si el archivo intersecta con el período de interés
+            if s_yr <= req_end and e_yr >= req_start:
+                filtered_files.append(f)
+        else:
+            filtered_files.append(f)
+
     # Ordenar por nombre de archivo cronológico
-    sorted_files = sorted(best_file_by_name.values(), key=lambda x: x["file_name"] or "")
+    sorted_files = sorted(filtered_files, key=lambda x: x["file_name"] or "")
     return sorted_files, True
 
 
-def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None):
+def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None, period_ranges=None):
     """
     Ejecuta la segunda etapa de consulta para extraer el listado completo de archivos
-    NetCDF con URLs directas HTTPS para todas las realizaciones seleccionadas.
+    NetCDF con URLs directas HTTPS para todas las realizaciones seleccionadas,
+    filtrando únicamente los archivos que pertenecen al período de interés.
 
     Utiliza concurrencia controlada para consultar de manera eficiente sin saturar Solr.
 
@@ -594,18 +710,24 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None):
     max_workers : int
         Número de hilos concurrentes para consultas a la API.
     session : requests.Session, optional
+    period_ranges : dict, optional
+        Diccionario con rangos (año_inicio, año_fin) por experimento.
 
     Returns
     -------
     tuple (pandas.DataFrame, list)
-        files_df : DataFrame con todos los archivos NetCDF y URLs.
-        unresolved : Lista de combinaciones que no pudieron resolverse.
+        files_df : DataFrame con todos los archivos NetCDF y URLs dentro del período.
+        unresolved : Lista de combinaciones que no pudieron resolverse o sin archivos en el período.
     """
     print()
     print("=" * 70)
-    print("FASE 2: CONSULTA DETALLADA DE ARCHIVOS NETCDF")
+    print("FASE 2: CONSULTA DETALLADA DE ARCHIVOS NETCDF (FILTRADO POR PERÍODO)")
     print(f"Realizaciones seleccionadas a procesar: {len(selected_df)}")
     print(f"Total combinaciones dataset teóricas: {len(selected_df) * len(EXPERIMENTS) * len(VARIABLES):,}")
+    print("Períodos de interés configurados:")
+    eff_ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
+    for exp_k, r_v in eff_ranges.items():
+        print(f"   - {exp_k:12s}: {r_v[0]} a {r_v[1]}")
     print("=" * 70)
     print()
 
@@ -629,7 +751,7 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None):
     def worker_func(task_args):
         src, var_lbl, exp, var = task_args
         files, success = fetch_files_for_combination(
-            src, var_lbl, exp, var, session=http_session
+            src, var_lbl, exp, var, session=http_session, period_ranges=eff_ranges
         )
         return task_args, files, success
 
@@ -648,7 +770,7 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None):
                     "variant_label": var_lbl,
                     "experiment_id": exp,
                     "variable_id": var,
-                    "reason": "Error en consulta" if not success else "Sin archivos devueltos",
+                    "reason": "Error en consulta" if not success else "Sin archivos en el período de interés",
                 })
             else:
                 all_files_records.extend(files)
@@ -683,6 +805,8 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None):
             "variant_label",
             "experiment_id",
             "variable_id",
+            "start_year",
+            "end_year",
             "file_name",
             "file_link",
             "https_url",
@@ -710,22 +834,23 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None):
     return files_df, unresolved_combinations
 
 
-def validate_files_inventory(files_df, selected_df, unresolved_combinations):
+def validate_files_inventory(files_df, selected_df, unresolved_combinations, period_ranges=None):
     """
     Ejecuta una rutina de validación que calcula y muestra estadísticas clave de los
-    archivos extraídos:
+    archivos extraídos, incluyendo verificación de cobertura temporal:
         - Cantidad de combinaciones procesadas vs esperadas
-        - Total de archivos NetCDF encontrados
+        - Total de archivos NetCDF encontrados en período
         - Archivos con URL HTTPS directa
         - Archivos con acceso Globus
-        - Combinaciones no resueltas
-        - URLs únicas
+        - Combinaciones no resueltas o sin datos en período
+        - Cobertura temporal completa por dataset (min_yr <= inicio, max_yr >= fin)
 
     Parameters
     ----------
     files_df : pandas.DataFrame
     selected_df : pandas.DataFrame
     unresolved_combinations : list
+    period_ranges : dict, optional
     """
     total_expected_datasets = len(selected_df) * len(EXPERIMENTS) * len(VARIABLES)
     total_files = len(files_df)
@@ -749,8 +874,8 @@ def validate_files_inventory(files_df, selected_df, unresolved_combinations):
     print("=" * 70)
     print(f"Realizaciones seleccionadas procesadas : {len(selected_df):,}")
     print(f"Combinaciones dataset esperadas        : {total_expected_datasets:,}")
-    print(f"Combinaciones dataset no resueltas     : {len(unresolved_combinations):,}")
-    print(f"Total archivos NetCDF encontrados      : {total_files:,}")
+    print(f"Combinaciones no resueltas en período  : {len(unresolved_combinations):,}")
+    print(f"Total archivos NetCDF en período       : {total_files:,}")
     print(f"Archivos con URL HTTPS directa         : {https_count:,}")
     print(f"Archivos con URL HTTP estándar         : {http_count:,}")
     print(f"Archivos con soporte Globus            : {globus_count:,}")
@@ -758,13 +883,46 @@ def validate_files_inventory(files_df, selected_df, unresolved_combinations):
     print(f"Volumen total catalogado               : {total_size_gb:,.2f} GB")
     print("=" * 70)
 
+    # Validación de Cobertura Temporal por Dataset
+    ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
+    if not files_df.empty and "start_year" in files_df.columns:
+        combos = files_df.groupby(["source_id", "variant_label", "experiment_id", "variable_id"]).agg(
+            min_yr=("start_year", "min"),
+            max_yr=("end_year", "max"),
+            file_count=("file_name", "count")
+        ).reset_index()
+
+        incomplete_temporal = []
+        for _, row in combos.iterrows():
+            exp = row["experiment_id"]
+            req_r = ranges.get(exp)
+            if req_r:
+                req_s, req_e = req_r
+                if row["min_yr"] > req_s or row["max_yr"] < req_e:
+                    incomplete_temporal.append({
+                        "source_id": row["source_id"],
+                        "variant_label": row["variant_label"],
+                        "experiment_id": exp,
+                        "variable_id": row["variable_id"],
+                        "covered_range": f"{row['min_yr']}-{row['max_yr']}",
+                        "required_range": f"{req_s}-{req_e}",
+                    })
+
+        if incomplete_temporal:
+            print("\n[ADVERTENCIA] Datasets con cobertura temporal PARCIAL para el periodo requerido:")
+            for inc in incomplete_temporal:
+                print(f"   [PARCIAL] {inc['source_id']} ({inc['variant_label']}) {inc['experiment_id']} {inc['variable_id']}: Cubre {inc['covered_range']} (Requerido: {inc['required_range']})")
+        else:
+            print("\n[OK] Todos los datasets catalogados cubren el 100% de los periodos de interes configurados.")
+
     if unresolved_combinations:
         print()
-        print("ADVERTENCIA: Combinaciones no resueltas:")
-        for unres in unresolved_combinations[:10]:
-            print(f"  - {unres['source_id']} {unres['variant_label']} {unres['experiment_id']} {unres['variable_id']}: {unres['reason']}")
-        if len(unresolved_combinations) > 10:
-            print(f"  ... y {len(unresolved_combinations) - 10} más.")
+        print("Combinaciones sin archivos disponibles en el periodo de interes:")
+        for unres in unresolved_combinations[:15]:
+            print(f"  [SIN DATOS] {unres['source_id']} ({unres['variant_label']}) {unres['experiment_id']} {unres['variable_id']}: {unres['reason']}")
+        if len(unresolved_combinations) > 15:
+            print(f"  ... y {len(unresolved_combinations) - 15} mas.")
+    print("=" * 70)
     print()
 
 

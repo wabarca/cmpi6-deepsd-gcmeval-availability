@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Generador del catálogo y manifiesto para los 10 modelos CMIP6 100% completos
-=============================================================================
+Generador del catálogo y manifiesto para los 10 modelos CMIP6 con filtrado temporal
+===================================================================================
 Modelos incluidos:
   1. NorESM2-MM   (r1i1p1f1)
   2. EC-Earth3    (r4i1p1f1)
@@ -18,7 +18,7 @@ Modelos incluidos:
 
 10 variables: ua, va, ta, hur, hus, zg, psl, tasmax, tasmin, pr
 5 experimentos: historical, ssp126, ssp245, ssp370, ssp585
-Total combinaciones teóricas: 500 datasets
+Filtrado estricto por períodos de interés configurables.
 """
 
 import os
@@ -45,6 +45,17 @@ TARGET_10_MODELS = [
     ("KACE-1-0-G", "r1i1p1f1"),
 ]
 
+# =============================================================================
+# PERÍODOS DE INTERÉS CONFIGURABLES (Modificar aquí si cambia el horizonte)
+# =============================================================================
+PERIOD_RANGES = {
+    "historical": (1950, 2014),
+    "ssp126": (2015, 2100),
+    "ssp245": (2015, 2100),
+    "ssp370": (2015, 2100),
+    "ssp585": (2015, 2100),
+}
+
 
 def main():
     print("=" * 70)
@@ -55,8 +66,10 @@ def main():
         {"source_id": s, "variant_label": v} for s, v in TARGET_10_MODELS
     ])
 
-    files_df, unresolved = build_files_inventory(selected_df, max_workers=6)
-    validate_files_inventory(files_df, selected_df, unresolved)
+    files_df, unresolved = build_files_inventory(
+        selected_df, max_workers=6, period_ranges=PERIOD_RANGES
+    )
+    validate_files_inventory(files_df, selected_df, unresolved, period_ranges=PERIOD_RANGES)
 
     # 1. Guardar CSV completo de 10 modelos
     csv_out = "cmip6_files_10_models.csv"
@@ -67,7 +80,8 @@ def main():
     tsv_out = "cmip6_manifest_10_models.tsv"
     tsv_cols = [
         "source_id", "variant_label", "experiment_id", "variable_id",
-        "file_name", "https_url", "checksum", "checksum_type", "file_size_mb", "data_node"
+        "start_year", "end_year", "file_name", "https_url", "checksum",
+        "checksum_type", "file_size_mb", "data_node"
     ]
     avail_cols = [c for c in tsv_cols if c in files_df.columns]
     files_df[avail_cols].to_csv(tsv_out, sep="\t", index=False)

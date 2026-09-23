@@ -102,22 +102,22 @@ sudo dnf install -y epel-release && sudo dnf install -y cdo aria2 curl rsync ope
 
 ## 🌍 Modelos, Variables y Experimentos
 
-### 10 Modelos de Ensamble Seleccionados (100% de Cobertura en ESGF)
+### 10 Modelos de Ensamble Seleccionados (Evaluación de Cobertura Temporal en ESGF)
 
-Estos 10 modelos cuentan con **cobertura total (500 datasets / 8,667 archivos NetCDF)** para todas las 10 variables en los 5 experimentos requeridos:
+El catálogo evalúa la disponibilidad de los 10 modelos aplicando un **filtrado estricto por período de interés** (`1950-2014` para historical y `2015-2100` para SSPs):
 
-| N° | Modelo (`source_id`) | Miembro (`variant_label`) | Datasets Disponibles | Estado |
-|:---|:---------------------|:--------------------------|:--------------------:|:------:|
-| 1 | `NorESM2-MM` | `r1i1p1f1` | 50 / 50 | 100% Completo |
-| 2 | `EC-Earth3` | `r4i1p1f1` | 50 / 50 | 100% Completo |
-| 3 | `UKESM1-0-LL` | `r1i1p1f2` | 50 / 50 | 100% Completo |
-| 4 | `MPI-ESM1-2-LR` | `r5i1p1f1` | 50 / 50 | 100% Completo |
-| 5 | `TaiESM1` | `r1i1p1f1` | 50 / 50 | 100% Completo |
-| 6 | `MRI-ESM2-0` | `r1i1p1f1` | 50 / 50 | 100% Completo |
-| 7 | `ACCESS-CM2` | `r1i1p1f1` | 50 / 50 | 100% Completo |
-| 8 | `IPSL-CM6A-LR` | `r2i1p1f1` | 50 / 50 | 100% Completo |
-| 9 | `INM-CM4-8` | `r1i1p1f1` | 50 / 50 | 100% Completo |
-| 10 | `KACE-1-0-G` | `r1i1p1f1` | 50 / 50 | 100% Completo |
+| N° | Modelo (`source_id`) | Miembro (`variant_label`) | Datasets en Período | Estado |
+|:---|:---------------------|:--------------------------|:-------------------:|:------:|
+| 1 | `NorESM2-MM` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 2 | `EC-Earth3` | `r4i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 3 | `UKESM1-0-LL` | `r1i1p1f2` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 4 | `MPI-ESM1-2-LR` | `r5i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 5 | `TaiESM1` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 6 | `MRI-ESM2-0` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 7 | `IPSL-CM6A-LR` | `r2i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 8 | `INM-CM4-8` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 9 | `KACE-1-0-G` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+| 10 | `ACCESS-CM2` | `r1i1p1f1` | 46 / 50 | 46 completos (4 variables con extensiones no deseadas en ESGF) |
 
 ### 10 Variables Diarias (`table_id = day`)
 - `ua`: Viento zonal (m/s)
@@ -131,9 +131,9 @@ Estos 10 modelos cuentan con **cobertura total (500 datasets / 8,667 archivos Ne
 - `tasmin`: Temperatura mínima diaria del aire en superficie (K)
 - `pr`: Precipitación diaria (kg m-2 s-1)
 
-### 5 Experimentos
-- `historical` (Período de referencia: `1950-2014`)
-- `ssp126`, `ssp245`, `ssp370`, `ssp585` (Período de proyección: `2015-2100`)
+### 5 Experimentos y Períodos de Interés Configurables
+- `historical`: `1950-2014` (Configurable en scripts vía `PERIOD_RANGES` o `HISTORICAL_START_YEAR` / `HISTORICAL_END_YEAR`)
+- `ssp126`, `ssp245`, `ssp370`, `ssp585`: `2015-2100` (Configurable vía `SSP_START_YEAR` / `SSP_END_YEAR`)
 
 ---
 
