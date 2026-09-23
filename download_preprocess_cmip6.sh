@@ -177,7 +177,6 @@ local_file_exists() {
 transfer_and_cleanup() {
     local local_file="$1"
     local model="$2"
-    local temp_var_dir="${3:-}"
     local fname
     fname=$(basename "$local_file")
 
@@ -204,27 +203,17 @@ transfer_and_cleanup() {
             fi
         fi
 
-        # Eliminar carpeta temporal con archivos brutos si fue provista
-        if [ -n "$temp_var_dir" ] && [ -d "$temp_var_dir" ]; then
-            rm -rf "$temp_var_dir"
-        fi
-
         if [ "$transfer_success" = true ]; then
             echo " [TRANSFERENCIA] ✅ Archivo $fname transferido con éxito al almacenamiento remoto."
             # Limpiar archivo local procesado para liberar disco
             if [ "$CLEANUP_LOCAL_AFTER_SYNC" == "true" ]; then
                 rm -f "$local_file"
-                echo " [LIMPIEZA] 🗑️  Archivo local procesado eliminado."
+                echo " [LIMPIEZA] 🗑️  Archivo local procesado eliminado ($fname)."
             fi
             return 0
         else
             echo " [ERROR TRANSFERENCIA] ⚠️ No se pudo transferir $fname a ${SSH_TARGET}. Se conserva el archivo local en $local_file"
             return 1
-        fi
-    else
-        # Si no hay sincronización remota, solo limpiar la carpeta temporal
-        if [ -n "$temp_var_dir" ] && [ -d "$temp_var_dir" ]; then
-            rm -rf "$temp_var_dir"
         fi
     fi
 }
@@ -249,7 +238,7 @@ process_variable_worker() {
 
     echo " [CDO PROCESO] ⚙️  Iniciando CDO con $CDO_THREADS hilos para $model $exp $var..."
 
-    # Recorte espacial sellonlatbox
+    # 1. Recorte espacial sellonlatbox y eliminación progresiva inmediata de brutos
     for r_file in "$raw_dir"/*.nc; do
         if [ -f "$r_file" ]; then
             fn=$(basename "$r_file")
@@ -258,25 +247,35 @@ process_variable_worker() {
                 echo " [CDO AVISO] Falló recorte con -P, reintentando modo estándar para $fn..."
                 cdo -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file"
             fi
+            # Eliminar el archivo bruto inmediatamente para no saturar disco
+            rm -f "$r_file"
         fi
     done
+    rm -rf "$raw_dir"
 
-    # Concatenación temporal (mergetime) y selección de período
+    # 2. Concatenación temporal (mergetime)
     local merged_temp="${var_temp_dir}/merged_all.nc"
     local clipped_files=("$clipped_dir"/*.nc)
 
     if [ ${#clipped_files[@]} -eq 1 ]; then
-        cp "${clipped_files[0]}" "$merged_temp"
+        mv "${clipped_files[0]}" "$merged_temp"
     else
-        cdo -P "$CDO_THREADS" -s mergetime "${clipped_dir}"/*.nc "$merged_temp" 2>/dev/null || \
-        cdo -s mergetime "${clipped_dir}"/*.nc "$merged_temp"
+        if ! cdo -P "$CDO_THREADS" -s mergetime "${clipped_dir}"/*.nc "$merged_temp" 2>/dev/null; then
+            cdo -s mergetime "${clipped_dir}"/*.nc "$merged_temp"
+        fi
     fi
+    # Eliminar recortes individuales inmediatamente tras mergetime
+    rm -rf "$clipped_dir"
 
+    # 3. Selección de período (selyear)
     local temp_final="${var_temp_dir}/${fname_final}"
-    cdo -P "$CDO_THREADS" -s selyear,"$selyear_range" "$merged_temp" "$temp_final" 2>/dev/null || \
-    cdo -s selyear,"$selyear_range" "$merged_temp" "$temp_final"
+    if ! cdo -P "$CDO_THREADS" -s selyear,"$selyear_range" "$merged_temp" "$temp_final" 2>/dev/null; then
+        cdo -s selyear,"$selyear_range" "$merged_temp" "$temp_final"
+    fi
+    # Eliminar merged_temp inmediatamente tras selyear
+    rm -f "$merged_temp"
 
-    # Verificar que el NetCDF final sea válido
+    # 4. Verificar que el NetCDF final sea válido
     if cdo -s sinfo "$temp_final" &>/dev/null; then
         mkdir -p "$(dirname "$final_file")"
         mv "$temp_final" "$final_file"
@@ -284,8 +283,11 @@ process_variable_worker() {
         f_sz=$(du -h "$final_file" 2>/dev/null | cut -f1 || echo "OK")
         echo " [CDO PROCESO] ✅ CDO completado para $fname_final ($f_sz)"
 
-        # Transferir a PC de almacenamiento y limpiar
-        transfer_and_cleanup "$final_file" "$model" "$var_temp_dir"
+        # Purgar carpeta temporal completa inmediatamente tras generar el archivo final
+        rm -rf "$var_temp_dir"
+
+        # Transferir a PC de almacenamiento
+        transfer_and_cleanup "$final_file" "$model"
     else
         echo " [ERROR CRÍTICO] El archivo generado para $model $exp $var no es un NetCDF válido."
         rm -rf "$var_temp_dir"
@@ -308,6 +310,12 @@ main() {
 
     mkdir -p "$LOCAL_OUTPUT_DIR"
     mkdir -p "$TEMP_DIR"
+
+    # Purgar temporales huérfanos de ejecuciones previas interrumpidas
+    if [ -d "$TEMP_DIR" ]; then
+        echo " [LIMPIEZA INICIAL] 🧹 Purgando archivos temporales residuales en $TEMP_DIR..."
+        rm -rf "${TEMP_DIR:?}"/* 2>/dev/null || true
+    fi
 
     echo "======================================================================"
     echo " PIPELINE CMIP6 PIPELINED: DESCARGA + CDO MULTI-CORE + SYNC REMOTO"
@@ -381,7 +389,7 @@ main() {
         if local_file_exists "$model" "$final_fname"; then
             if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
                 echo " [SINCRONIZACIÓN PENDIENTE] 🔄 Archivo ya procesado localmente. Transfiriendo a servidor remoto..."
-                if transfer_and_cleanup "$final_file" "$model" ""; then
+                if transfer_and_cleanup "$final_file" "$model"; then
                     processed_count=$((processed_count + 1))
                 fi
                 continue

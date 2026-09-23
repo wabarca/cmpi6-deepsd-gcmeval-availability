@@ -71,8 +71,9 @@ case "${1:-status}" in
     stop)
         if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
             pid=$(cat "$PID_FILE")
-            echo "Deteniendo proceso (PID: $pid)..."
-            kill "$pid"
+            echo "Deteniendo proceso principal (PID: $pid) y subprocesos..."
+            pkill -P "$pid" 2>/dev/null || true
+            kill "$pid" 2>/dev/null || true
             rm -f "$PID_FILE"
             echo "[OK] Proceso detenido."
         else
