@@ -52,7 +52,12 @@ aria2_input.txt
 
 # Temporary test files and backups
 test_*
-cmip6_*.xlsx
+
+# CMIP6 generated files
 cmip6_*.csv
 cmip6_*.txt
+cmip6_*.xlsx
+cmip6_*.tsv
+
+# GCMEval generated files
 gcmeval_*.csv
