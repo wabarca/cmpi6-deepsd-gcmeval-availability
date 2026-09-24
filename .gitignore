@@ -58,6 +58,3 @@ cmip6_*.csv
 cmip6_*.txt
 cmip6_*.xlsx
 cmip6_*.tsv
-
-# GCMEval generated files
-gcmeval_*.csv
