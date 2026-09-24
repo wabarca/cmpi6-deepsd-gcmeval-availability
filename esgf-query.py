@@ -395,10 +395,14 @@ def build_inventory(session=None, period_ranges=None):
     rows = []
     for key, vars_found in inventory.items():
         source_id, variant_label, experiment_id = key
+        req_p = ranges.get(experiment_id)
+        p_str = f"{req_p[0]}-{req_p[1]}" if req_p else "N/A"
+
         row = {
             "source_id": source_id,
             "variant_label": variant_label,
             "experiment_id": experiment_id,
+            "period_range": p_str,
         }
 
         for var in VARIABLES:
@@ -406,10 +410,15 @@ def build_inventory(session=None, period_ranges=None):
 
         row["score"] = len(vars_found)
         row["complete"] = row["score"] == len(VARIABLES)
+        row["period_available"] = row["complete"]
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    df = df.sort_values(["source_id", "variant_label", "experiment_id"])
+    # Ordenar primero por disponibilidad en período (TRUE arriba) y luego alfabéticamente
+    df = df.sort_values(
+        by=["period_available", "source_id", "variant_label", "experiment_id"],
+        ascending=[False, True, True, True]
+    )
 
     stats = {
         "total_numfound": total_numfound,
@@ -446,7 +455,7 @@ def build_summary(df):
     Returns
     -------
     pandas.DataFrame
-        Resumen consolidado con métricas de completitud.
+        Resumen consolidado con métricas de completitud y disponibilidad de período.
     """
     max_possible = len(VARIABLES) * len(EXPERIMENTS)
 
@@ -461,10 +470,12 @@ def build_summary(df):
 
     summary["availability_pct"] = 100.0 * summary["total_variables"] / max_possible
     summary["all_experiments_complete"] = summary["complete_experiments"] == len(EXPERIMENTS)
+    summary["period_available"] = summary["all_experiments_complete"]
 
+    # Ordenar primero por modelos que cumplen todas las condiciones (TRUE primero) y luego alfabéticamente
     summary = summary.sort_values(
-        ["complete_experiments", "total_variables", "availability_pct"],
-        ascending=False,
+        by=["period_available", "source_id", "variant_label"],
+        ascending=[False, True, True],
     )
 
     return summary
@@ -933,6 +944,7 @@ def validate_files_inventory(files_df, selected_df, unresolved_combinations, per
 def export_results(df, summary, selected, files_df,
                    csv_inventory="cmip6_daily_inventory.csv",
                    csv_files="cmip6_files.csv",
+                   csv_complete_models="cmip6_complete_models.csv",
                    xlsx_file="cmip6_daily_inventory.xlsx"):
     """
     Exporta el inventario, resumen, seleccionados y archivos a archivos CSV y Excel,
@@ -950,6 +962,7 @@ def export_results(df, summary, selected, files_df,
         Catálogo detallado de archivos NetCDF.
     csv_inventory : str
     csv_files : str
+    csv_complete_models : str
     xlsx_file : str
     """
     # Guardar CSVs
@@ -959,6 +972,14 @@ def export_results(df, summary, selected, files_df,
     if not files_df.empty:
         files_df.to_csv(csv_files, index=False)
         print(f"Catálogo de archivos CSV guardado: {csv_files}")
+
+    # Exportar CSV con los nombres de los modelos que cumplen todas las condiciones en formato NOMBRE.variante (sin encabezado)
+    complete_models_df = summary[summary["period_available"] == True].copy()
+    complete_models_df["model"] = complete_models_df["source_id"].astype(str) + "." + complete_models_df["variant_label"].astype(str)
+    complete_models_df = complete_models_df.sort_values("model")
+
+    complete_models_df[["model"]].to_csv(csv_complete_models, index=False, header=False)
+    print(f"Listado de modelos completos CSV guardado ({len(complete_models_df)} modelos, sin encabezado): {csv_complete_models}")
 
     if not OPENPYXL_AVAILABLE:
         print("[AVISO] openpyxl no está instalado en este entorno; se exportará Excel básico sin formato.")
@@ -991,7 +1012,7 @@ def export_results(df, summary, selected, files_df,
             # Formato condicional en 'inventory'
             ws_inventory = writer.sheets["inventory"]
             var_cols = [i for i, cell in enumerate(ws_inventory[1], start=1) if cell.value in VARIABLES]
-            comp_cols = [i for i, cell in enumerate(ws_inventory[1], start=1) if cell.value == "complete"]
+            comp_cols = [i for i, cell in enumerate(ws_inventory[1], start=1) if cell.value in ("complete", "period_available")]
 
             for col_num in var_cols + comp_cols:
                 for row in range(2, ws_inventory.max_row + 1):
@@ -1000,6 +1021,21 @@ def export_results(df, summary, selected, files_df,
                         cell.fill = green_fill
                     elif cell.value is False:
                         cell.fill = red_fill
+
+            # Formato condicional en 'summary'
+            if "summary" in writer.sheets:
+                ws_summary = writer.sheets["summary"]
+                bool_sum_cols = [
+                    i for i, cell in enumerate(ws_summary[1], start=1)
+                    if cell.value in ("all_experiments_complete", "period_available", "gcmeval")
+                ]
+                for col_num in bool_sum_cols:
+                    for row in range(2, ws_summary.max_row + 1):
+                        cell = ws_summary.cell(row=row, column=col_num)
+                        if cell.value is True:
+                            cell.fill = green_fill
+                        elif cell.value is False:
+                            cell.fill = red_fill
 
             # Hipervínculos y formato en 'selected'
             ws_selected = writer.sheets["selected"]
@@ -1057,7 +1093,7 @@ def export_results(df, summary, selected, files_df,
     except PermissionError:
         alt_xlsx = f"cmip6_daily_inventory_{int(time.time())}.xlsx"
         print(f"[ADVERTENCIA] No se pudo escribir '{xlsx_file}' (posiblemente abierto en Excel). Guardando en '{alt_xlsx}'...")
-        export_results(df, summary, selected, files_df, csv_inventory, csv_files, alt_xlsx)
+        export_results(df, summary, selected, files_df, csv_inventory, csv_files, csv_complete_models, alt_xlsx)
 
 
 # ---------------------------------------------------------------------
@@ -1127,6 +1163,7 @@ def main():
         files_df=files_df,
         csv_inventory="cmip6_daily_inventory.csv",
         csv_files="cmip6_files.csv",
+        csv_complete_models="cmip6_complete_models.csv",
         xlsx_file="cmip6_daily_inventory.xlsx",
     )
 
@@ -1135,7 +1172,7 @@ def main():
     print("PROCESO COMPLETADO EXITOSAMENTE")
     print("=" * 70)
     print(f"Modelos únicos identificados          : {stats['unique_models']:,}")
-    print(f"Realizaciones completas seleccionadas : {len(selected):,}")
+    print(f"Realizaciones completas en período    : {len(selected):,}")
     print(f"Realizaciones compatibles con GCMEval : {selected['gcmeval'].sum():,}")
     print(f"Total archivos NetCDF catalogados     : {len(files_df):,}")
     print("=" * 70)

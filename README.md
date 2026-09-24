@@ -36,19 +36,20 @@ Este repositorio contiene las herramientas automatizadas para:
 ```text
 .
 ├── esgf-query.py                  # Script principal: consulta ESGF Solr, genera inventario y extrae URLs
-├── generate_manifest_10.py        # Generador del manifiesto para los 10 modelos seleccionados (100% completos)
+├── generate_manifest.py           # Generador dinámico de manifiestos a partir de un archivo CSV de modelos
+├── selected_models.csv            # Lista de modelos seleccionados para generar manifiestos (formato NOMBRE.variante)
 ├── download_preprocess_cmip6.sh   # Pipeline en Bash: descarga aria2c + CDO pipelined + rsync/scp remoto
 ├── run_background.sh              # Gestor de ejecución en segundo plano (start, status, log, stop)
 ├── gcmeval_models.csv             # Catálogo de modelos compatibles con GCMEval
 ├── gcmeval_ensemble_models.csv    # Catálogo de miembros de ensamble GCMEval
 │
-├── cmip6_daily_inventory.xlsx     # Libro Excel (hojas: inventory, summary, selected, files)
+├── cmip6_daily_inventory.xlsx     # Libro Excel (hojas: inventory, summary, selected, files) con columnas de período
 ├── cmip6_daily_inventory.csv      # Inventario tabular de datasets
+├── cmip6_complete_models.csv      # Listado de modelos con 100% de disponibilidad (sin encabezado, NOMBRE.variante)
 ├── cmip6_files.csv                # Catálogo completo de archivos NetCDF extraídos
 │
-├── cmip6_manifest_10_models.tsv   # Manifiesto TSV para automatización de los 10 modelos (8,667 archivos)
-├── cmip6_files_10_models.csv      # Catálogo CSV de los 10 modelos
-├── cmip6_urls_10_models.txt       # Lista plana de URLs directas para descarga
+├── cmip6_manifest.tsv             # Manifiesto TSV para automatización de descarga y CDO
+├── cmip6_urls.txt                 # Lista plana de URLs directas para descarga
 └── README.md                      # Documentación completa del flujo de trabajo
 ```
 
@@ -185,19 +186,28 @@ python esgf-query.py
 
 ---
 
-### Paso 2: Generación del Manifiesto de 10 Modelos (`generate_manifest_10.py`)
+### Paso 2: Generación Dinámica del Manifiesto (`generate_manifest.py`)
 
-Genera el catálogo y manifiesto estructurado para los 10 modelos que tienen el 100% de disponibilidad:
+Genera el catálogo y manifiesto estructurado leyendo la lista de modelos desde un archivo CSV/texto externo (sin modelos quemados en el código):
 
-**Ejecución:**
+**Ejecución básica (usa `selected_models.csv` por defecto):**
 ```bash
-python generate_manifest_10.py
+python generate_manifest.py
+```
+
+**Ejecución personalizada con otro archivo o parámetros:**
+```bash
+# Usando la lista de todos los modelos completos generados por esgf-query
+python generate_manifest.py -i cmip6_complete_models.csv -o cmip6_manifest.tsv --workers 8
+
+# Especificando períodos temporales personalizados
+python generate_manifest.py -i selected_models.csv --hist-start 1950 --hist-end 2014 --ssp-start 2015 --ssp-end 2100
 ```
 
 **Salidas generadas:**
-- `cmip6_manifest_10_models.tsv`: Manifiesto delimitado por tabuladores (TSV) con URLs, checksums SHA256, tamaños de archivo y metadatos.
-- `cmip6_files_10_models.csv`: Catálogo CSV de los 10 modelos (8,667 archivos).
-- `cmip6_urls_10_models.txt`: Lista plana de URLs directas.
+- `cmip6_manifest.tsv`: Manifiesto delimitado por tabuladores (TSV) con URLs, checksums SHA256, tamaños de archivo y metadatos.
+- `cmip6_files.csv`: Catálogo CSV detallado de los modelos procesados.
+- `cmip6_urls.txt`: Lista plana de URLs directas para descarga.
 
 ---
 

@@ -39,8 +39,16 @@ set -euo pipefail
 # 1. Configuración General y Parámetros
 # ------------------------------------------------------------------------------
 
-# Archivo de manifiesto TSV generado con URLs y metadatos de los 10 modelos
-MANIFEST="${MANIFEST:-cmip6_manifest_10_models.tsv}"
+# Archivo de manifiesto TSV (por defecto cmip6_manifest.tsv o cmip6_manifest_10_models.tsv)
+if [ -z "${MANIFEST:-}" ]; then
+    if [ -f "cmip6_manifest.tsv" ]; then
+        MANIFEST="cmip6_manifest.tsv"
+    elif [ -f "cmip6_manifest_10_models.tsv" ]; then
+        MANIFEST="cmip6_manifest_10_models.tsv"
+    else
+        MANIFEST="cmip6_manifest.tsv"
+    fi
+fi
 
 # Directorio temporal local de trabajo (se limpia automáticamente tras procesar)
 TEMP_DIR="${TEMP_DIR:-./tmp_cmip6_pipeline}"
