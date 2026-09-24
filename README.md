@@ -20,7 +20,7 @@ Este repositorio contiene las herramientas automatizadas para:
 - [Modelos, Variables y Experimentos](#-modelos-variables-y-experimentos)
 - [Flujo de Trabajo Paso a Paso](#-flujo-de-trabajo-paso-a-paso)
   - [Paso 1: Inventario Global y Extracción de URLs (`esgf-query.py`)](#paso-1-inventario-global-y-extracción-de-urls-esgf-querypy)
-  - [Paso 2: Generación del Manifiesto de 10 Modelos (`generate_manifest_10.py`)](#paso-2-generación-del-manifiesto-de-10-modelos-generate_manifest_10py)
+  - [Paso 2: Generación Dinámica del Manifiesto (`generate_manifest.py`)](#paso-2-generación-dinámica-del-manifiesto-generate_manifestpy)
   - [Paso 3: Descarga, Preprocesamiento y Transferencia Remota (`download_preprocess_cmip6.sh`)](#paso-3-descarga-preprocesamiento-y-transferencia-remota-download_preprocess_cmip6sh)
 - [Configuración de Transferencia Remota (SSH sin contraseña)](#-configuración-de-transferencia-remota-ssh-sin-contraseña)
 - [Ejecución en Servidores Remotos y Segundo Plano](#-ejecución-en-servidores-remotos-y-segundo-plano)
@@ -105,7 +105,7 @@ sudo dnf install -y epel-release && sudo dnf install -y cdo aria2 curl rsync ope
 
 ### 10 Modelos de Ensamble Seleccionados (Evaluación de Cobertura Temporal en ESGF)
 
-El catálogo evalúa la disponibilidad de los 10 modelos aplicando un **filtrado estricto por período de interés** (`1950-2014` para historical y `2015-2100` para SSPs):
+El catálogo evalúa la disponibilidad de los modelos aplicando un **filtrado estricto por período de interés** (`1950-2014` para historical y `2015-2100` para SSPs). La lista de modelos a procesar se gestiona en `selected_models.csv`:
 
 | N° | Modelo (`source_id`) | Miembro (`variant_label`) | Datasets en Período | Estado |
 |:---|:---------------------|:--------------------------|:-------------------:|:------:|
@@ -118,7 +118,9 @@ El catálogo evalúa la disponibilidad de los 10 modelos aplicando un **filtrado
 | 7 | `IPSL-CM6A-LR` | `r2i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
 | 8 | `INM-CM4-8` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
 | 9 | `KACE-1-0-G` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 10 | `ACCESS-CM2` | `r1i1p1f1` | 46 / 50 | 46 completos (4 variables con extensiones no deseadas en ESGF) |
+| 10 | `ACCESS-CM2` | `r4i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
+
+> **Nota**: Para `ACCESS-CM2`, la variante `r1i1p1f1` en ESGF carece de proyecciones 2015-2100 para algunas variables (publicó extensiones 2251-2300). Usando la variante `r4i1p1f1` (o `r5i1p1f1`), el ensamble alcanza el **100% de cobertura completa (50/50)**.
 
 ### 10 Variables Diarias (`table_id = day`)
 - `ua`: Viento zonal (m/s)
@@ -143,9 +145,9 @@ El catálogo evalúa la disponibilidad de los 10 modelos aplicando un **filtrado
 ```mermaid
 flowchart TD
     subgraph PC1["PC de Descarga y Procesamiento (Ancho de Banda Alto)"]
-        A["1. esgf-query.py"] -->|Consulta ESGF Solr| B[("Inventario Excel / CSV")]
-        B --> C["2. generate_manifest_10.py"]
-        C -->|cmip6_manifest_10_models.tsv| D["3. download_preprocess_cmip6.sh"]
+        A["1. esgf-query.py"] -->|Consulta ESGF Solr| B[("Inventario Excel / CSV<br>cmip6_complete_models.csv")]
+        B -->|selected_models.csv| C["2. generate_manifest.py"]
+        C -->|cmip6_manifest.tsv| D["3. download_preprocess_cmip6.sh"]
         
         subgraph Pipeline["Pipelining Productor-Consumidor"]
             D --> E["Descarga Variable N con aria2c"]
@@ -156,7 +158,7 @@ flowchart TD
     end
     
     subgraph PC2["PC de Almacenamiento (192.168.4.27)"]
-        H -->|rsync / scp vía SSH sin contraseña| I[("E:\\CMIP6\\CMIP6_GCMs_Processed\\<MODELO>\\")]
+        H -->|scp / rsync vía SSH sin contraseña| I[("E:\\CMIP6\\CMIP6_GCMs_Processed\\<MODELO>\\")]
     end
     
     I -->|Confirmación de Transferencia| J["Limpieza Automática de Disco en PC1"]
