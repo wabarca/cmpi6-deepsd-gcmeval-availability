@@ -1123,16 +1123,34 @@ def main():
 
     # Cruce con GCMEval
     if os.path.exists("gcmeval_models.csv"):
-        gcmeval = pd.read_csv("gcmeval_models.csv")
-        gcmeval["model_key"] = (
-            gcmeval["source_id"].astype(str) + "|" + gcmeval["variant_label"].astype(str)
-        )
-        summary["model_key"] = (
-            summary["source_id"].astype(str) + "|" + summary["variant_label"].astype(str)
-        )
-        gcmeval_set = set(gcmeval["model_key"])
-        summary["gcmeval"] = summary["model_key"].isin(gcmeval_set)
-        summary = summary.drop(columns=["model_key"])
+        try:
+            gcmeval_set = set()
+            with open("gcmeval_models.csv", "r", encoding="utf-8") as f:
+                for line in f:
+                    l = line.strip()
+                    if not l or l.startswith("#"):
+                        continue
+                    if l.lower() in ("model", "modelo", "source_id,variant_label", "source_id.variant_label"):
+                        continue
+                    if "," in l:
+                        parts = l.split(",")
+                        s_id, v_lbl = parts[0].strip(), parts[1].strip()
+                    elif "." in l:
+                        parts = l.rsplit(".", 1)
+                        s_id, v_lbl = parts[0].strip(), parts[1].strip()
+                    else:
+                        s_id, v_lbl = l, ""
+                    if s_id and v_lbl:
+                        gcmeval_set.add(f"{s_id}|{v_lbl}")
+                        gcmeval_set.add(f"{s_id}.{v_lbl}")
+
+            summary["model_pipe"] = summary["source_id"].astype(str) + "|" + summary["variant_label"].astype(str)
+            summary["model_dot"] = summary["source_id"].astype(str) + "." + summary["variant_label"].astype(str)
+            summary["gcmeval"] = summary["model_pipe"].isin(gcmeval_set) | summary["model_dot"].isin(gcmeval_set)
+            summary = summary.drop(columns=["model_pipe", "model_dot"])
+        except Exception as e:
+            print(f"[ADVERTENCIA] Error al procesar gcmeval_models.csv: {e}")
+            summary["gcmeval"] = False
     else:
         print("[AVISO] gcmeval_models.csv no encontrado; omitiendo cruce con GCMEval.")
         summary["gcmeval"] = False
