@@ -377,20 +377,22 @@ Una vez actualizado `statistics.rda`, el script `run_cmip6_evaluation.R` detecta
 ```mermaid
 flowchart TD
     subgraph PC1["PC de Descarga y Procesamiento"]
-        A["1. esgf-query.py"] -->|Consulta ESGF| B["Inventario Excel / CSV<br>cmip6_complete_models.csv"]
-        B -->|selected_models.csv| C["2. generate_manifest.py"]
-        C -->|cmip6_manifest.tsv| D["3. download_preprocess_cmip6.sh"]
-        D --> E["Descarga Variable N con aria2c"]
-        E -->|Fin descarga N| F["Procesamiento CDO Variable N en background"]
-        E -.->|En paralelo| G["Descarga Variable N+1 con aria2c"]
-        F -->|sellonlatbox + mergetime + selyear| H["Archivo NetCDF Final"]
+        A["1. esgf-query.py"] -->|Consulta ESGF y Cruce GCMEval| B["Inventario Excel / CSV<br>cmip6_complete_models.csv"]
+        B -->|36 Modelos Candidatos| C["2. run_evaluation.py<br>(Evaluación R GCMEval)"]
+        C -->|Rankings E0-E8 + Spread| D["Selección de Familias<br>selected_models.csv"]
+        D --> E["3. generate_manifest.py"]
+        E -->|cmip6_manifest.tsv| F["4. download_preprocess_cmip6.sh"]
+        F --> G["Descarga Variable N con aria2c"]
+        G -->|Fin descarga N| H["Procesamiento CDO Variable N en background"]
+        G -.->|En paralelo| I["Descarga Variable N+1 con aria2c"]
+        H -->|sellonlatbox + mergetime + selyear| J["Archivo NetCDF Final"]
     end
     
     subgraph PC2["PC de Almacenamiento 192.168.4.27"]
-        H -->|Transferencia SSH scp / rsync| I["E:/CMIP6/CMIP6_GCMs_Processed/MODELO/"]
+        J -->|Transferencia SSH scp / rsync| K["E:/CMIP6/CMIP6_GCMs_Processed/MODELO/"]
     end
     
-    I -->|Confirmacion de Transferencia| J["Limpieza Automatica de Disco en PC1"]
+    K -->|Confirmacion de Transferencia| L["Limpieza Automatica de Disco en PC1"]
 ```
 
 ---
@@ -407,12 +409,8 @@ python esgf-query.py
 ```
 
 **Salidas generadas:**
-- `cmip6_daily_inventory.xlsx`: Libro Excel con 4 hojas formateadas condicionalmente:
-  - `inventory`: Matriz de disponibilidad por experimento.
-  - `summary`: Resumen consolidado ordenado por cobertura.
-  - `selected`: Modelos completos con enlaces de búsqueda MetaGrid.
-  - `files`: Catálogo de archivos NetCDF con enlaces directos clicables "Abrir".
-- `cmip6_complete_models.csv`: Lista plana (`NOMBRE.variante`, sin encabezado) de modelos 100% completos en período y validados en GCMEval (guardada tanto en la raíz como en `gcmeval/cmip6_complete_models.csv`).
+- `cmip6_daily_inventory.xlsx`: Libro Excel con 4 hojas formateadas condicionalmente (`inventory`, `summary`, `selected`, `files`).
+- `cmip6_complete_models.csv`: Lista plana (`NOMBRE.variante`, sin encabezado) de realizaciones 100% completas en período y validadas en GCMEval (36 combinaciones).
 - `selected_models.csv`: Lista base para alimentar `generate_manifest.py`.
 - `cmip6_daily_inventory.csv`: Inventario general tabular.
 - `cmip6_files.csv`: Catálogo plano de archivos NetCDF.
@@ -420,9 +418,41 @@ python esgf-query.py
 
 ---
 
-### Paso 2: Generación Dinámica del Manifiesto (`generate_manifest.py`)
+### Paso 2: Evaluación Climatológica y Selección de Ensamble (`run_evaluation.py`)
 
-Genera el catálogo y manifiesto estructurado leyendo la lista de modelos desde un archivo CSV/texto externo (sin modelos quemados en el código):
+Orquesta desde Python la ejecución del motor de evaluación climatológica de GCMEval en R ([`gcmeval/run_cmip6_evaluation.R`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/run_cmip6_evaluation.R)). Detecta automáticamente el ejecutable de R, valida las librerías necesarias y ejecuta los 9 experimentos de sensibilidad (E0 a E8) para Centroamérica:
+
+**Ejecución desde Python:**
+```bash
+python run_evaluation.py
+```
+
+**Opciones disponibles:**
+```bash
+# Instalar automáticamente paquetes de R faltantes
+python run_evaluation.py --install-deps
+
+# Especificar ruta personalizada a Rscript
+python run_evaluation.py --r-path "C:\Program Files\R\R-4.4.3\bin\Rscript.exe"
+
+# Evaluar una lista alternativa de modelos
+python run_evaluation.py --models-csv mi_lista_modelos.csv
+```
+
+**Salidas generadas en el directorio `results/`:**
+- `ranking_E0.csv` a `ranking_E8.csv`: Rankings individuales de los 9 experimentos de sensibilidad.
+- `ranking_summary_all_experiments.csv`: Matriz consolidada de posiciones por experimento.
+- `analysis_stage1_variants.csv`: Estadística descriptiva de todas las 36 variantes evaluadas.
+- `analysis_stage2_best_variants.csv`: Selección de la mejor corrida representativa por familia.
+- `analysis_stage3_families.csv`: Clasificación general de las 16 familias de modelos.
+- `future_spread_ssp585_CAM.html`: Gráfico interactivo Plotly con ventanas emergentes interactivas de estadísticas al hacer clic en cada modelo.
+- `future_spread_ssp585_CAM.png`: Gráfico estático de dispersión ($\Delta T$ vs $\Delta P$) en alta resolución (300 DPI).
+
+---
+
+### Paso 3: Generación Dinámica del Manifiesto (`generate_manifest.py`)
+
+Genera el catálogo y manifiesto estructurado leyendo la lista de modelos seleccionados desde un archivo CSV/texto externo (`selected_models.csv` o `cmip6_complete_models.csv`):
 
 **Ejecución básica (usa `selected_models.csv` por defecto):**
 ```bash
@@ -445,7 +475,7 @@ python generate_manifest.py -i selected_models.csv --hist-start 1950 --hist-end 
 
 ---
 
-### Paso 3: Descarga, Preprocesamiento y Transferencia Remota (`download_preprocess_cmip6.sh`)
+### Paso 4: Descarga, Preprocesamiento y Transferencia Remota (`download_preprocess_cmip6.sh`)
 
 El script Bash ejecuta el flujo automatizado de alto rendimiento:
 
