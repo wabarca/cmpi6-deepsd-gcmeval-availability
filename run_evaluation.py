@@ -213,6 +213,15 @@ def run_evaluation(rscript_exe, script_path, models_csv=None, output_dir=None):
             size_kb = f.stat().st_size / 1024.0
             print(f"  • {f.name:36s} ({size_kb:7.1f} KB)")
     print("=" * 75)
+    print()
+    print("=" * 75)
+    print("SIGUIENTE PASO RECOMENDADO")
+    print("=" * 75)
+    print("Para generar el manifiesto técnico y catálogo de descarga NetCDF de los")
+    print("10 modelos seleccionados (cmip6_manifest.tsv), ejecuta:")
+    print("   python generate_manifest.py")
+    print("=" * 75)
+    print()
 
 
 def main():
