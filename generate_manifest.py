@@ -44,7 +44,13 @@ esgf_mod = importlib.import_module("esgf-query")
 
 build_files_inventory = esgf_mod.build_files_inventory
 validate_files_inventory = esgf_mod.validate_files_inventory
-DEFAULT_PERIOD_RANGES = esgf_mod.PERIOD_RANGES
+DEFAULT_PERIOD_RANGES = getattr(esgf_mod, "DEFAULT_PERIOD_RANGES", getattr(esgf_mod, "PERIOD_RANGES", {
+    "historical": (1950, 2014),
+    "ssp126": (2015, 2100),
+    "ssp245": (2015, 2100),
+    "ssp370": (2015, 2100),
+    "ssp585": (2015, 2100),
+}))
 
 
 def load_models_from_file(file_path):
