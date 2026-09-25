@@ -1,14 +1,15 @@
 ## global.R - Load libraries and define help functions for the shiny app "gcmeval"
-library(plotrix)
-library(shiny)
-library(shinyjs)
-library(shinydashboard)
-library(sp)
-library(DT)
-#library(esd)
-library(fields)
-library(plotly)
-library(gcmeval) # back-end package
+suppressPackageStartupMessages({
+  library(plotrix)
+  library(sp)
+  library(DT)
+  library(fields)
+  library(plotly)
+  library(gcmeval) # back-end package
+  if (requireNamespace("shiny", quietly = TRUE)) library(shiny)
+  if (requireNamespace("shinyjs", quietly = TRUE)) library(shinyjs)
+  if (requireNamespace("shinydashboard", quietly = TRUE)) library(shinydashboard)
+})
 
 jsrefocus <- "
 shinyjs.refocus = function(e_id) {
