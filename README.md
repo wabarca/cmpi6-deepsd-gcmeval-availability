@@ -131,14 +131,14 @@ El inventario aplica un embudo jerárquico de 3 niveles para garantizar que úni
 
 ```mermaid
 flowchart TD
-    A["1. Universo ESGF / MetaGrid<br/>(62 familias de modelos, 2,335 combinaciones evaluadas)"] --> B["2. Filtro Técnico de Disponibilidad ESGF<br/>(10 variables × 5 experimentos completos en período)"]
-    B --> C["90 Realizaciones 100% Completas en ESGF<br/>(Pertenecientes a 23 familias de modelos)"]
+    A["1. Universo ESGF y MetaGrid<br>(62 familias de modelos, 2335 combinaciones)"] --> B["2. Filtro Tecnico de Disponibilidad ESGF<br>(10 variables en 5 experimentos completos)"]
+    B --> C["90 Realizaciones 100% Completas en ESGF<br>(23 familias de modelos)"]
     
-    D["Catálogo GCMEval<br/>(gcmeval/gcmeval_models.csv: 120 combinaciones)"] --> E{"Intersección Estricta"}
+    D["Catalogo GCMEval<br>(gcmeval_models.csv: 120 combinaciones)"] --> E{"Interseccion Estricta"}
     C --> E
     
-    E --> F["3. Realizaciones Seleccionadas Finales<br/>(36 combinaciones modelo.variante)"]
-    F --> G["Fase 2: Catálogo y Manifiesto de Descarga<br/>(36 × 50 = 1,800 consultas de archivos NetCDF)"]
+    E --> F["3. Realizaciones Seleccionadas Finales<br>(36 combinaciones modelo.variante)"]
+    F --> G["Fase 2: Catalogo y Manifiesto de Descarga<br>(1800 consultas de archivos NetCDF)"]
 ```
 
 1. **Nivel 1: Familias de Modelos y Realizaciones en ESGF:**
@@ -376,24 +376,21 @@ Una vez actualizado `statistics.rda`, el script `run_cmip6_evaluation.R` detecta
 
 ```mermaid
 flowchart TD
-    subgraph PC1["PC de Descarga y Procesamiento (Ancho de Banda Alto)"]
-        A["1. esgf-query.py"] -->|Consulta ESGF Solr| B[("Inventario Excel / CSV<br>cmip6_complete_models.csv")]
+    subgraph PC1["PC de Descarga y Procesamiento"]
+        A["1. esgf-query.py"] -->|Consulta ESGF| B["Inventario Excel / CSV<br>cmip6_complete_models.csv"]
         B -->|selected_models.csv| C["2. generate_manifest.py"]
         C -->|cmip6_manifest.tsv| D["3. download_preprocess_cmip6.sh"]
-        
-        subgraph Pipeline["Pipelining Productor-Consumidor"]
-            D --> E["Descarga Variable N con aria2c"]
-            E -->|Al finalizar descarga N| F["Procesamiento CDO Variable N (background)"]
-            E -.->|En paralelo| G["Descarga Variable N+1 con aria2c"]
-            F -->|sellonlatbox + mergetime + selyear| H["Archivo NetCDF Final"]
-        end
+        D --> E["Descarga Variable N con aria2c"]
+        E -->|Fin descarga N| F["Procesamiento CDO Variable N en background"]
+        E -.->|En paralelo| G["Descarga Variable N+1 con aria2c"]
+        F -->|sellonlatbox + mergetime + selyear| H["Archivo NetCDF Final"]
     end
     
-    subgraph PC2["PC de Almacenamiento (192.168.4.27)"]
-        H -->|scp / rsync vía SSH sin contraseña| I[("E:\\CMIP6\\CMIP6_GCMs_Processed\\<MODELO>\\")]
+    subgraph PC2["PC de Almacenamiento 192.168.4.27"]
+        H -->|Transferencia SSH scp / rsync| I["E:/CMIP6/CMIP6_GCMs_Processed/MODELO/"]
     end
     
-    I -->|Confirmación de Transferencia| J["Limpieza Automática de Disco en PC1"]
+    I -->|Confirmacion de Transferencia| J["Limpieza Automatica de Disco en PC1"]
 ```
 
 ---
