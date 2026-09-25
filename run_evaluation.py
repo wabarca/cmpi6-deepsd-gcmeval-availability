@@ -31,14 +31,16 @@ if hasattr(sys.stderr, "reconfigure"):
 
 def find_rscript(custom_path=None):
     """
-    Localiza el ejecutable 'Rscript' en el sistema.
+    Localiza el ejecutable 'Rscript' en el sistema de manera robusta y multiplataforma.
 
     Prioridad de búsqueda:
-    1. Ruta personalizada provista por el usuario.
+    1. Ruta personalizada provista por el usuario (--r-path).
     2. Variable de entorno RSCRIPT_PATH o R_HOME.
-    3. PATH del sistema operativo (shutil.which).
-    4. Rutas estándar de instalación en Windows (C:\\Program Files\\R\\R-*).
-    5. Rutas estándar en Linux / macOS (/usr/bin/Rscript, /usr/local/bin/Rscript).
+    3. Entorno activo Conda / Mamba / Virtualenv ($CONDA_PREFIX, $VIRTUAL_ENV).
+    4. PATH del sistema operativo (shutil.which).
+    5. Rutas estándar de instalación en Linux (/usr/bin, /usr/local/bin, /usr/lib/R/bin, /opt/R, etc.).
+    6. Rutas estándar de instalación en macOS (/opt/homebrew/bin, /usr/local/Cellar, etc.).
+    7. Rutas estándar de instalación en Windows (C:\\Program Files\\R\\R-*, AppData, etc.).
     """
     if custom_path:
         p = Path(custom_path)
@@ -53,7 +55,7 @@ def find_rscript(custom_path=None):
     # 1. Variable de entorno RSCRIPT_PATH
     env_rscript = os.environ.get("RSCRIPT_PATH")
     if env_rscript and os.path.isfile(env_rscript):
-        return env_rscript
+        return os.path.abspath(env_rscript)
 
     # 2. Variable de entorno R_HOME
     r_home = os.environ.get("R_HOME")
@@ -65,12 +67,27 @@ def find_rscript(custom_path=None):
         if cand2.is_file():
             return str(cand2.resolve())
 
-    # 3. Búsqueda en el PATH del sistema
+    # 3. Entorno activo Conda / Mamba / Virtualenv
+    for env_var in ("CONDA_PREFIX", "MAMBA_ROOT_PREFIX", "VIRTUAL_ENV"):
+        prefix = os.environ.get(env_var)
+        if prefix:
+            cand = Path(prefix) / ("Scripts/Rscript.exe" if sys.platform == "win32" else "bin/Rscript")
+            if cand.is_file():
+                return str(cand.resolve())
+
+    # 4. Búsqueda directa en el PATH del sistema
     which_r = shutil.which("Rscript") or shutil.which("Rscript.exe")
     if which_r:
-        return which_r
+        return os.path.abspath(which_r)
 
-    # 4. Búsqueda en rutas estándar de Windows
+    # Fallback si en el PATH solo está 'R' y no 'Rscript' directamente
+    which_r_bin = shutil.which("R")
+    if which_r_bin:
+        cand = Path(which_r_bin).parent / ("Rscript.exe" if sys.platform == "win32" else "Rscript")
+        if cand.is_file():
+            return str(cand.resolve())
+
+    # 5. Búsqueda en rutas estándar de Windows
     if sys.platform == "win32":
         search_patterns = [
             r"C:\Program Files\R\R-*\bin\Rscript.exe",
@@ -78,32 +95,59 @@ def find_rscript(custom_path=None):
             r"C:\Program Files (x86)\R\R-*\bin\Rscript.exe",
             os.path.expanduser(r"~\AppData\Local\Programs\R\R-*\bin\Rscript.exe"),
             os.path.expanduser(r"~\miniforge3\envs\*\Scripts\Rscript.exe"),
+            os.path.expanduser(r"~\miniforge3\Scripts\Rscript.exe"),
             os.path.expanduser(r"~\miniconda3\envs\*\Scripts\Rscript.exe"),
+            os.path.expanduser(r"~\miniconda3\Scripts\Rscript.exe"),
             os.path.expanduser(r"~\anaconda3\envs\*\Scripts\Rscript.exe"),
+            os.path.expanduser(r"~\anaconda3\Scripts\Rscript.exe"),
+            os.path.expanduser(r"~\.conda\envs\*\Scripts\Rscript.exe"),
         ]
         candidates = []
         for pat in search_patterns:
             candidates.extend(glob.glob(pat))
         if candidates:
-            # Ordenar para tomar la versión más reciente
             candidates.sort(reverse=True)
-            return candidates[0]
+            return os.path.abspath(candidates[0])
 
-    # 5. Búsqueda en rutas estándar de Linux / macOS
+    # 6. Búsqueda exhaustiva en rutas estándar de Linux y macOS / Unix
     else:
-        unix_paths = [
+        unix_search_patterns = [
+            # Paquetes del sistema estándar (Debian, Ubuntu, Rocky, RHEL, CentOS, Fedora, Arch, openSUSE)
             "/usr/bin/Rscript",
             "/usr/local/bin/Rscript",
+            "/usr/lib/R/bin/Rscript",
+            "/usr/lib64/R/bin/Rscript",
+            # Rutas de instalación manual o módulos
             "/opt/R/*/bin/Rscript",
+            "/opt/R/bin/Rscript",
+            "/opt/local/bin/Rscript",
+            "/opt/homebrew/bin/Rscript",
+            "/usr/local/Cellar/r/*/bin/Rscript",
+            # Nix / Spack / Guix / Entornos de usuario
+            os.path.expanduser("~/.nix-profile/bin/Rscript"),
+            "/nix/var/nix/profiles/default/bin/Rscript",
+            os.path.expanduser("~/.local/bin/Rscript"),
+            # Gestores de entornos científicos (Conda, Miniforge, Mamba)
+            os.path.expanduser("~/miniforge3/bin/Rscript"),
             os.path.expanduser("~/miniforge3/envs/*/bin/Rscript"),
+            os.path.expanduser("~/miniconda3/bin/Rscript"),
             os.path.expanduser("~/miniconda3/envs/*/bin/Rscript"),
+            os.path.expanduser("~/anaconda3/bin/Rscript"),
             os.path.expanduser("~/anaconda3/envs/*/bin/Rscript"),
+            os.path.expanduser("~/micromamba/bin/Rscript"),
+            os.path.expanduser("~/micromamba/envs/*/bin/Rscript"),
+            os.path.expanduser("~/.conda/envs/*/bin/Rscript"),
+            # Servidores y clusters HPC
+            "/software/R/*/bin/Rscript",
+            "/software/apps/R/*/bin/Rscript",
+            "/apps/R/*/bin/Rscript",
         ]
-        for pat in unix_paths:
-            matches = glob.glob(pat)
-            if matches:
-                matches.sort(reverse=True)
-                return matches[0]
+        candidates = []
+        for pat in unix_search_patterns:
+            candidates.extend(glob.glob(pat))
+        if candidates:
+            candidates.sort(reverse=True)
+            return os.path.abspath(candidates[0])
 
     return None
 
@@ -254,8 +298,19 @@ def main():
     rscript_exe = find_rscript(args.r_path)
     if not rscript_exe:
         print("[ERROR] No se pudo encontrar el ejecutable 'Rscript' en el sistema.")
-        print("        Por favor instala R (https://cran.r-project.org/) o especifica su ruta:")
-        print("        python run_evaluation.py --r-path \"C:\\Program Files\\R\\R-4.4.3\\bin\\Rscript.exe\"")
+        print()
+        print("Instrucciones de instalación según tu sistema operativo:")
+        print("  • Ubuntu / Debian:")
+        print("       sudo apt-get update && sudo apt-get install -y r-base r-base-dev")
+        print("  • RedHat / Rocky Linux / CentOS / Fedora:")
+        print("       sudo dnf install -y epel-release && sudo dnf install -y R-core R-devel")
+        print("  • Entorno Conda / Mamba (Linux / Windows / macOS):")
+        print("       conda install -y -c conda-forge r-base")
+        print("  • Windows:")
+        print("       Descarga el instalador desde CRAN: https://cran.r-project.org/bin/windows/base/")
+        print("       O especifica la ruta manualmente:")
+        print("       python run_evaluation.py --r-path \"C:\\Program Files\\R\\R-4.4.3\\bin\\Rscript.exe\"")
+        print()
         sys.exit(1)
 
     print(f"[INFO] Ejecutable R detectado: {rscript_exe}")
