@@ -418,16 +418,35 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
       legend = list(orientation = "h", xanchor = "center", x = 0.5, y = -0.15)
     )
   
-  # Distribuciones marginales (boxplots arriba y derecha como en Shiny)
-  px <- plot_ly(x = spread_df$Delta_Tas_C, type = "box", name = "ΔT Spread",
-                marker = list(color = "#4dac26"), line = list(color = "#2b6616"), showlegend = FALSE)
-  py <- plot_ly(y = spread_df$Delta_Pr_pct, type = "box", name = "ΔP Spread",
-                marker = list(color = "#d01c8b"), line = list(color = "#800e54"), showlegend = FALSE)
+  # Distribuciones marginales (dos boxplots por eje como en Shiny GCMEval: Ensamble Total vs Seleccionados)
+  # Eje X (Arriba): ΔT Spread
+  px <- plot_ly(
+    x = spread_df$Delta_Tas_C, type = "box", name = "Ensamble Total (36)",
+    color = I("#98c166"), line = list(color = "#444444"),
+    boxmean = TRUE, showlegend = FALSE
+  ) %>%
+    add_trace(
+      x = best_df$Delta_Tas_C, type = "box", name = "Seleccionados (16)",
+      color = I("#4dac26"), line = list(color = "#1b4332", width = 1.8),
+      boxmean = TRUE, showlegend = FALSE
+    )
+  
+  # Eje Y (Derecha): ΔP Spread
+  py <- plot_ly(
+    y = spread_df$Delta_Pr_pct, type = "box", name = "Ensamble Total (36)",
+    color = I("#d196ba"), line = list(color = "#444444"),
+    boxmean = TRUE, showlegend = FALSE
+  ) %>%
+    add_trace(
+      y = best_df$Delta_Pr_pct, type = "box", name = "Seleccionados (16)",
+      color = I("#d01c8b"), line = list(color = "#800e54", width = 1.8),
+      boxmean = TRUE, showlegend = FALSE
+    )
   
   p_composite <- subplot(
     px, plotly_empty(type = "scatter", mode = "markers"),
     p_scatter, py,
-    nrows = 2, heights = c(0.12, 0.88), widths = c(0.88, 0.12), margin = 0.01,
+    nrows = 2, heights = c(0.14, 0.86), widths = c(0.86, 0.14), margin = 0.01,
     shareX = TRUE, shareY = TRUE, titleX = TRUE, titleY = TRUE
   )
   
