@@ -307,12 +307,7 @@ gcmeval_ramp <- colorRampPalette(c("#4dac26", "#98c166", "#d7d7d7", "#d196ba", "
 max_rank <- max(spread_df$Mean_Rank, na.rm = TRUE)
 spread_df$Color_Hex <- gcmeval_ramp(100)[pmin(100, pmax(1, round((spread_df$Mean_Rank / max_rank) * 100)))]
 
-spread_df$HoverText <- sprintf(
-  "<b>%s</b><br>Familia: %s<br>Variante: %s<br>Mean Rank: %.2f%s<br>ΔT: +%.2f °C<br>ΔP: %.2f mm/día (%.1f%%)",
-  spread_df$Modelo, spread_df$Familia, spread_df$Variante, spread_df$Mean_Rank,
-  ifelse(spread_df$Es_Mejor_Familia, sprintf(" <b>[Mejor de Familia #%d]</b>", spread_df$Rank_Familia), ""),
-  spread_df$Delta_Tas_C, spread_df$Delta_Pr_mm_day, spread_df$Delta_Pr_pct
-)
+spread_df$HoverText <- sprintf("<b>%s</b>", spread_df$Modelo)
 
 best_df  <- spread_df[spread_df$Es_Mejor_Familia, ]
 other_df <- spread_df[!spread_df$Es_Mejor_Familia, ]
@@ -354,7 +349,7 @@ cat(sprintf("[OK] Gráfico de Spread Futuro (PNG) guardado: %s\n", spread_plot_p
 if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets", quietly = TRUE)) {
   library(plotly)
   
-  # Scatter principal
+  # Scatter principal con etiquetas limpias (solo nombres)
   p_scatter <- plot_ly() %>%
     add_trace(
       data = other_df,
@@ -366,7 +361,7 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
         symbol = "circle",
         line = list(color = "grey40", width = 0.8)
       ),
-      text = ~HoverText,
+      text = ~Modelo,
       hoverinfo = "text",
       name = "Otras Variantes"
     ) %>%
@@ -374,9 +369,10 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
       data = best_df,
       x = ~Delta_Tas_C, y = ~Delta_Pr_pct,
       type = "scatter", mode = "markers+text",
-      text = ~HoverText,
+      text = ~Familia,
       textposition = "top center",
       textfont = list(family = "Arial", size = 11, color = "#111111"),
+      hovertext = ~Modelo,
       hoverinfo = "text",
       marker = list(
         color = ~Color_Hex,
