@@ -155,14 +155,19 @@ def find_rscript(custom_path=None):
 def check_r_packages(rscript_exe, auto_install=False):
     """
     Verifica si los paquetes de R necesarios para la evaluación están instalados.
+    Soporta la instalación inteligente en Conda (binarios pre-compilados sin necesidad de compilar fuentes C++)
+    y la instalación del paquete local 'gcmeval' desde el subdirectorio 'gcmeval/back-end'.
     """
-    required_packages = ["gcmeval", "ggplot2", "plotly", "htmlwidgets", "DT", "fields", "plotrix", "sp"]
+    repo_root = Path(__file__).parent.resolve()
+    backend_dir = repo_root / "gcmeval" / "back-end"
     
     check_code = (
-        'req <- c("gcmeval", "ggplot2", "plotly", "htmlwidgets", "DT", "fields", "plotrix", "sp"); '
+        'req_cran <- c("ggplot2", "plotly", "htmlwidgets", "DT", "fields", "plotrix", "sp"); '
         'installed <- rownames(installed.packages()); '
-        'missing <- req[!req %in% installed]; '
-        'if (length(missing) > 0) cat(paste("MISSING:", paste(missing, collapse=","))) else cat("ALL_INSTALLED")'
+        'missing_cran <- req_cran[!req_cran %in% installed]; '
+        'has_gcmeval <- "gcmeval" %in% installed; '
+        'cat(paste("CRAN_MISSING:", paste(missing_cran, collapse=","), "\n")); '
+        'cat(paste("GCMEVAL_INSTALLED:", has_gcmeval, "\n"))'
     )
     
     try:
@@ -173,22 +178,85 @@ def check_r_packages(rscript_exe, auto_install=False):
             check=True
         )
         output = res.stdout.strip()
-        if "ALL_INSTALLED" in output:
+        missing_cran = []
+        gcmeval_installed = True
+        
+        for line in output.splitlines():
+            line = line.strip()
+            if line.startswith("CRAN_MISSING:"):
+                val = line.split("CRAN_MISSING:")[1].strip()
+                if val:
+                    missing_cran = [p.strip() for p in val.split(",") if p.strip()]
+            elif line.startswith("GCMEVAL_INSTALLED:"):
+                val = line.split("GCMEVAL_INSTALLED:")[1].strip()
+                gcmeval_installed = (val.lower() == "true")
+
+        if not missing_cran and gcmeval_installed:
             print("[OK] Todas las dependencias de R requeridas están instaladas.")
             return True
-        elif "MISSING:" in output:
-            missing_pkgs = output.split("MISSING:")[1].strip().split(",")
-            print(f"[AVISO] Faltan los siguientes paquetes de R: {', '.join(missing_pkgs)}")
-            if auto_install:
-                print(f"[INFO] Instalando paquetes faltantes: {missing_pkgs}...")
-                install_code = f'install.packages(c({", ".join([repr(p) for p in missing_pkgs])}), repos="https://cloud.r-project.org")'
-                inst_res = subprocess.run([rscript_exe, "-e", install_code])
-                return inst_res.returncode == 0
+
+        missing_all = list(missing_cran)
+        if not gcmeval_installed:
+            missing_all.append("gcmeval")
+
+        print(f"[AVISO] Faltan los siguientes paquetes de R: {', '.join(missing_all)}")
+
+        # Detectar si R se ejecuta dentro de un entorno Conda / Mamba
+        rscript_lower = str(rscript_exe).lower()
+        is_conda_env = "conda" in rscript_lower or "miniconda" in rscript_lower or "miniforge" in rscript_lower or "envs" in rscript_lower or "CONDA_PREFIX" in os.environ
+        conda_bin = shutil.which("mamba") or shutil.which("conda")
+
+        if auto_install:
+            success = True
+            # 1. Si estamos en Conda y faltan paquetes CRAN, intentar instalar vía conda-forge (evita errores de compilación C++)
+            if missing_cran:
+                if is_conda_env and conda_bin:
+                    conda_pkgs = [f"r-{p.lower()}" for p in missing_cran]
+                    print(f"[INFO] Instalando paquetes binarios desde conda-forge con {os.path.basename(conda_bin)}: {conda_pkgs}...")
+                    c_res = subprocess.run([conda_bin, "install", "-y", "-c", "conda-forge"] + conda_pkgs)
+                    if c_res.returncode != 0:
+                        print("[AVISO] Falló la instalación vía conda, intentando con install.packages() de R...")
+                        install_code = f'install.packages(c({", ".join([repr(p) for p in missing_cran])}), repos="https://cloud.r-project.org")'
+                        inst_res = subprocess.run([rscript_exe, "-e", install_code])
+                        if inst_res.returncode != 0:
+                            success = False
+                else:
+                    print(f"[INFO] Instalando paquetes CRAN desde R: {missing_cran}...")
+                    install_code = f'install.packages(c({", ".join([repr(p) for p in missing_cran])}), repos="https://cloud.r-project.org")'
+                    inst_res = subprocess.run([rscript_exe, "-e", install_code])
+                    if inst_res.returncode != 0:
+                        success = False
+
+            # 2. Instalar paquete local 'gcmeval'
+            if not gcmeval_installed:
+                if backend_dir.is_dir():
+                    backend_r_path = str(backend_dir.as_posix())
+                    print(f"[INFO] Instalando paquete local 'gcmeval' desde '{backend_r_path}'...")
+                    install_local_code = f'install.packages("{backend_r_path}", repos = NULL, type = "source")'
+                    inst_local_res = subprocess.run([rscript_exe, "-e", install_local_code])
+                    if inst_local_res.returncode != 0:
+                        print("[ERROR] No se pudo instalar el paquete local 'gcmeval'.")
+                        success = False
+                else:
+                    print(f"[ERROR] No se encontró el directorio de desarrollo 'gcmeval/back-end' en '{backend_dir}'.")
+                    success = False
+
+            return success
+        else:
+            print("\n[GUÍA DE INSTALACIÓN DE DEPENDENCIAS]")
+            if is_conda_env:
+                conda_pkgs = [f"r-{p.lower()}" for p in missing_cran]
+                print("• Recomendado para Linux / Conda (instala binarios pre-compilados sin requerir cmake):")
+                print(f"    conda install -y -c conda-forge {' '.join(conda_pkgs)}")
+                if not gcmeval_installed:
+                    print("    Rscript -e \"install.packages('gcmeval/back-end', repos=NULL, type='source')\"")
             else:
-                print("[CONSEJO] Para instalarlos automáticamente ejecuta: python run_evaluation.py --install-deps")
-                print("           O desde la consola de R:")
-                print(f"           install.packages(c({', '.join([repr(p) for p in missing_pkgs])}))")
-                return False
+                if missing_cran:
+                    print(f"• Desde R (CRAN): install.packages(c({', '.join([repr(p) for p in missing_cran])}))")
+                if not gcmeval_installed:
+                    print("• Paquete local gcmeval: Rscript -e \"install.packages('gcmeval/back-end', repos=NULL, type='source')\"")
+            print("• O ejecuta automáticamente: python run_evaluation.py --install-deps\n")
+            return False
     except Exception as e:
         print(f"[AVISO] No se pudo verificar la lista de paquetes de R: {e}")
         return True

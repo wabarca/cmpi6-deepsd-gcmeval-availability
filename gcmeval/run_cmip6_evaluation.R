@@ -3,18 +3,32 @@
 # GCMEval Framework - Automated Experiments E0 to E8 and Future Spread Analysis
 # ==============================================================================
 
+# 1. Rutas y configuración
+workspace_dir <- getwd()
+gcmeval_dir <- if (dir.exists("gcmeval")) "gcmeval" else "."
+results_dir <- file.path(gcmeval_dir, "..", "results")
+if (!dir.exists(results_dir)) dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
+
+backend_dir <- file.path(gcmeval_dir, "back-end")
+
+# Verificar e instalar paquete local gcmeval si no está disponible en la librería de R
+if (!requireNamespace("gcmeval", quietly = TRUE)) {
+  if (dir.exists(backend_dir)) {
+    cat("[INFO] Instalando paquete local 'gcmeval' desde 'gcmeval/back-end'...\n")
+    tryCatch({
+      install.packages(backend_dir, repos = NULL, type = "source", quiet = FALSE)
+    }, error = function(e) {
+      cat(sprintf("[AVISO] No se pudo instalar 'gcmeval' automáticamente: %s\n", e$message))
+    })
+  }
+}
+
 suppressPackageStartupMessages({
   library(gcmeval)
   library(sp)
   library(fields)
   library(ggplot2)
 })
-
-# 1. Rutas y configuración
-workspace_dir <- getwd()
-gcmeval_dir <- if (dir.exists("gcmeval")) "gcmeval" else "."
-results_dir <- file.path(gcmeval_dir, "..", "results")
-if (!dir.exists(results_dir)) dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
 
 models_csv <- file.path(gcmeval_dir, "cmip6_complete_models.csv")
 if (!file.exists(models_csv)) {
