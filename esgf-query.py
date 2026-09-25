@@ -2,47 +2,24 @@
 # -*- coding: utf-8 -*-
 
 """
-CMIP6 Availability Inventory & NetCDF Files Builder
-===================================================
+CMIP6 Availability Inventory & NetCDF Files Builder (Interactivo & con Caché)
+============================================================================
 
 Construye un inventario de disponibilidad de variables CMIP6 a partir
-del índice ESGF-West (MetaGrid) y extrae las URLs HTTPS directas de los
-archivos NetCDF correspondientes a las realizaciones seleccionadas,
-dando prioridad a los nodos con acceso Globus.
+del índice ESGF-West (MetaGrid) o desde una copia local en caché, aplicando
+filtrado por período de interés y verificación estricta con el catálogo GCMEval.
 
-El flujo se divide en dos fases:
-
-Fase 1: Inventario y Selección
-------------------------------
-1. Consulta automática de datasets en el índice ESGF mediante la API Solr (/proxy/search, type=Dataset).
-2. Evaluación de disponibilidad para cada terna:
-       source_id, variant_label, experiment_id
-3. Resumen y consolidación por realización:
-       source_id, variant_label
-4. Comparación con el catálogo de modelos evaluados en GCMEval (gcmeval_models.csv).
-5. Selección de realizaciones completas (todas las variables en todos los experimentos).
-
-Fase 2: Extracción de URLs y Archivos NetCDF
---------------------------------------------
-6. Para cada realización seleccionada, consulta a nivel de archivo (type=File)
-   para cada combinación de experimento y variable requerida.
-7. Extracción de metadatos de archivo: nombre, URLs directas HTTPS, dataset_id,
-   instance_id, master_id, data_node, tamaño, checksum y método de acceso.
-8. Resolución inteligente de réplicas priorizando:
-       - URLs HTTPS de Globus (*.data.globus.org o nodos con soporte Globus)
-       - URLs HTTPS seguras de THREDDS (https://...)
-       - URLs HTTP estándar (http://...)
-9. Validación estadística y exportación estructurada.
-
-Salidas
--------
-cmip6_daily_inventory.csv : Inventario de disponibilidad por modelo-realización-experimento.
-cmip6_files.csv           : Listado detallado de archivos NetCDF con URLs directas.
-cmip6_daily_inventory.xlsx: Libro Excel con 4 hojas:
-    - 'inventory': Disponibilidad detallada por experimento con formato condicional.
-    - 'summary'  : Resumen consolidado por realización.
-    - 'selected' : Realizaciones completas con enlaces directos a MetaGrid.
-    - 'files'    : Catálogo de archivos NetCDF con enlaces directos clicables de descarga.
+Flujo:
+------
+1. Selección de Fuente de Metadatos (Caché local vs Consulta API ESGF).
+2. Resumen interactivo de parámetros de filtrado (período, experimentos, variables).
+3. Construcción del inventario y verificación cruzada obligatoria con GCMEval (gcmeval/gcmeval_models.csv).
+4. Exportación de resultados:
+   - cmip6_daily_inventory.xlsx (Libro Excel con formato condicional y enlaces)
+   - cmip6_daily_inventory.csv (Inventario tabular)
+   - cmip6_complete_models.csv (Modelos 100% completos y verificados en GCMEval, sin encabezado)
+   - selected_models.csv (Modelos listos para generate_manifest.py)
+   - cmip6_files.csv (Catálogo detallado de archivos NetCDF)
 
 Autor original: Will Abarca (wabarca@ambiente.gob.sv)
 """
@@ -52,6 +29,7 @@ import sys
 import json
 import time
 import re
+import argparse
 from urllib.parse import quote
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -60,6 +38,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import pandas as pd
+
 try:
     from openpyxl.styles import PatternFill
     from openpyxl.utils import get_column_letter
@@ -68,14 +47,14 @@ except ImportError:
     OPENPYXL_AVAILABLE = False
 
 # ---------------------------------------------------------------------
-# Configuración general
+# Configuración general por defecto
 # ---------------------------------------------------------------------
 
-# Endpoint utilizado por MetaGrid para consultar el índice ESGF Solr
 BASE_URL = "https://metagrid.esgf-west.org/proxy/search"
+CACHE_FILE_DATASETS = "esgf_raw_datasets.json"
+CACHE_FILE_FILES = "esgf_raw_files.json"
 
-# Variables atmosféricas y de superficie de interés
-VARIABLES = [
+DEFAULT_VARIABLES = [
     "ua",      # Viento zonal
     "va",      # Viento meridional
     "ta",      # Temperatura del aire
@@ -88,8 +67,7 @@ VARIABLES = [
     "pr",      # Precipitación diaria
 ]
 
-# Experimentos CMIP6 considerados
-EXPERIMENTS = [
+DEFAULT_EXPERIMENTS = [
     "historical",
     "ssp126",
     "ssp245",
@@ -97,9 +75,7 @@ EXPERIMENTS = [
     "ssp585",
 ]
 
-# Periodos de Interés Configurables por Experimento (Start Year, End Year)
-# Pueden modificarse según los requerimientos del proyecto
-PERIOD_RANGES = {
+DEFAULT_PERIOD_RANGES = {
     "historical": (1950, 2014),
     "ssp126": (2015, 2100),
     "ssp245": (2015, 2100),
@@ -107,24 +83,31 @@ PERIOD_RANGES = {
     "ssp585": (2015, 2100),
 }
 
-# Frecuencia temporal requerida
 TABLE_ID = "day"
-
-# Tamaño de página para consultas a ESGF Solr
 PAGE_SIZE = 1000
 FILES_PAGE_SIZE = 1000
-
-# Concurrencia para consultas de archivos (hilos de red)
 MAX_WORKERS = 6
+
+# Ruta al catálogo de modelos de GCMEval
+GCMEVAL_PATHS = [
+    os.path.join("gcmeval", "gcmeval_models.csv"),
+    "gcmeval_models.csv",
+]
+
+
+# ---------------------------------------------------------------------
+# Utilidades de Red y Metadatos
+# ---------------------------------------------------------------------
+
+def first(value):
+    """Devuelve el primer elemento si el valor es una lista, o el valor mismo."""
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
 
 
 def extract_file_years(file_name):
-    """
-    Extrae el año de inicio y fin desde el nombre estándar de un archivo NetCDF CMIP6.
-    Ejemplos:
-        hur_day_ACCESS-CM2_historical_r1i1p1f1_gn_19500101-19541231.nc -> (1950, 1954)
-        pr_day_ACCESS-CM2_ssp126_r1i1p1f1_gn_22510101-23001231.nc -> (2251, 2300)
-    """
+    """Extrae el año de inicio y fin desde el nombre estándar de un archivo NetCDF CMIP6."""
     m = re.search(r'_(\d{4,8})-(\d{4,8})\.nc$', str(file_name))
     if m:
         s_str, e_str = m.group(1), m.group(2)
@@ -133,10 +116,7 @@ def extract_file_years(file_name):
 
 
 def extract_dataset_years(doc):
-    """
-    Extrae el año de inicio y fin desde un documento Solr de tipo Dataset.
-    Intenta leer datetime_start, datetime_stop / datetime_end o campos de texto.
-    """
+    """Extrae el año de inicio y fin desde un documento Solr de tipo Dataset."""
     d_start = first(doc.get("datetime_start"))
     d_stop = first(doc.get("datetime_stop")) or first(doc.get("datetime_end"))
     s_yr, e_yr = None, None
@@ -159,19 +139,14 @@ def extract_dataset_years(doc):
     return s_yr, e_yr
 
 
-def is_dataset_in_period(doc, experiment_id, period_ranges=None):
-    """
-    Verifica si un dataset ESGF intersecta con el período de interés configurado
-    para el experimento dado.
-    """
-    ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
-    req_range = ranges.get(experiment_id)
+def is_dataset_in_period(doc, experiment_id, period_ranges):
+    """Verifica si un dataset ESGF intersecta con el período de interés configurado."""
+    req_range = period_ranges.get(experiment_id)
     if not req_range:
         return True
 
     s_yr, e_yr = extract_dataset_years(doc)
     if s_yr is None and e_yr is None:
-        # Si ESGF no proporciona metadatos temporales a nivel de dataset, no descartar
         return True
 
     req_start, req_end = req_range
@@ -185,21 +160,7 @@ def is_dataset_in_period(doc, experiment_id, period_ranges=None):
 
 
 def get_http_session(retries=3, backoff_factor=0.5):
-    """
-    Crea una sesión requests con pool de conexiones y reintentos automáticos
-    para robustez frente a microcortes o sobrecargas en nodos ESGF.
-
-    Parameters
-    ----------
-    retries : int
-        Número máximo de reintentos para fallos temporales.
-    backoff_factor : float
-        Factor de espera exponencial entre reintentos.
-
-    Returns
-    -------
-    requests.Session
-    """
+    """Crea una sesión requests con pool de conexiones y reintentos automáticos."""
     session = requests.Session()
     retry_strategy = Retry(
         total=retries,
@@ -213,31 +174,16 @@ def get_http_session(retries=3, backoff_factor=0.5):
     return session
 
 
-def build_metagrid_url(source_id, variant_label):
-    """
-    Construye una URL de búsqueda de MetaGrid para una realización específica.
-
-    Parameters
-    ----------
-    source_id : str
-        Nombre del modelo CMIP6.
-    variant_label : str
-        Identificador de la realización.
-
-    Returns
-    -------
-    str
-        URL completa de MetaGrid con facetas activas codificadas.
-    """
+def build_metagrid_url(source_id, variant_label, experiments, variables):
+    """Construye una URL de búsqueda de MetaGrid para una realización específica."""
     active_facets = {
         "table_id": TABLE_ID,
-        "experiment_id": EXPERIMENTS,
-        "variable_id": VARIABLES,
+        "experiment_id": experiments,
+        "variable_id": variables,
         "frequency": TABLE_ID,
         "source_id": source_id,
         "variant_label": variant_label,
     }
-
     return (
         "https://metagrid.esgf-west.org/search?"
         f"project=CMIP6&activeFacets="
@@ -245,49 +191,56 @@ def build_metagrid_url(source_id, variant_label):
     )
 
 
-def first(value):
-    """
-    Devuelve el primer elemento si el valor es una lista, o el valor mismo.
+# ---------------------------------------------------------------------
+# Manejo de GCMEval
+# ---------------------------------------------------------------------
 
-    Parameters
-    ----------
-    value : object
+def locate_gcmeval_file():
+    """Busca el archivo gcmeval_models.csv en las rutas estándar."""
+    for path in GCMEVAL_PATHS:
+        if os.path.exists(path):
+            return path
+    return None
 
-    Returns
-    -------
-    object
+
+def load_gcmeval_models(file_path=None):
     """
-    if isinstance(value, list):
-        return value[0] if value else None
-    return value
+    Carga el conjunto de modelos evaluados en GCMEval.
+    Soporta formato 'NOMBRE.variante' o 'source_id,variant_label'.
+    """
+    target_path = file_path or locate_gcmeval_file()
+    if not target_path or not os.path.exists(target_path):
+        return set(), None
+
+    gcmeval_set = set()
+    with open(target_path, "r", encoding="utf-8") as f:
+        for line in f:
+            l = line.strip()
+            if not l or l.startswith("#"):
+                continue
+            if l.lower() in ("model", "modelo", "source_id,variant_label", "source_id.variant_label"):
+                continue
+            if "," in l:
+                parts = l.split(",")
+                s_id, v_lbl = parts[0].strip(), parts[1].strip()
+            elif "." in l:
+                parts = l.rsplit(".", 1)
+                s_id, v_lbl = parts[0].strip(), parts[1].strip()
+            else:
+                s_id, v_lbl = l, ""
+            if s_id and v_lbl:
+                gcmeval_set.add(f"{s_id}|{v_lbl}")
+                gcmeval_set.add(f"{s_id}.{v_lbl}")
+
+    return gcmeval_set, target_path
 
 
 # ---------------------------------------------------------------------
-# FASE 1: Inventario de Datasets
+# Consulta y Caché de Datasets (Fase 1)
 # ---------------------------------------------------------------------
 
 def fetch_variable_experiment(variable, experiment, session=None):
-    """
-    Recupera todos los datasets asociados a una combinación variable-experimento
-    mediante consultas paginadas al índice ESGF Solr (/proxy/search).
-
-    Parameters
-    ----------
-    variable : str
-        Identificador de variable (ej. 'ua').
-    experiment : str
-        Identificador de experimento (ej. 'historical').
-    session : requests.Session, optional
-        Sesión HTTP reutilizable.
-
-    Returns
-    -------
-    tuple (docs_all, num_found)
-        docs_all : list of dict
-            Documentos Solr recuperados.
-        num_found : int
-            Total de documentos reportados por ESGF.
-    """
+    """Recupera todos los datasets asociados a una combinación variable-experimento desde ESGF Solr."""
     http = session or requests
     offset = 0
     docs_all = []
@@ -321,81 +274,96 @@ def fetch_variable_experiment(variable, experiment, session=None):
         docs_all.extend(docs)
         offset += len(docs)
 
-        print(f"{experiment:10s} {variable:5s} offset={offset:5d}")
-
         if len(docs) < PAGE_SIZE:
             break
 
     return docs_all, num_found_total
 
 
-def build_inventory(session=None, period_ranges=None):
+def download_all_raw_datasets(experiments, variables, session=None, cache_path=CACHE_FILE_DATASETS):
     """
-    Construye la matriz de disponibilidad a nivel de dataset considerando
-    únicamente aquellos datasets que cubren o intersectan el período de interés.
+    Descarga todos los documentos Solr de tipo Dataset para todas las combinaciones
+    y los almacena localmente en un archivo JSON de caché.
+    """
+    print()
+    print("=" * 70)
+    print("DESCARGANDO METADATOS CRUDOS DESDE ESGF SOLR (METAGRID)")
+    print(f"Total consultas a ejecutar: {len(experiments) * len(variables)} (Experimentos: {len(experiments)}, Variables: {len(variables)})")
+    print("=" * 70)
 
-    Parameters
-    ----------
-    session : requests.Session, optional
-    period_ranges : dict, optional
-        Diccionario con rangos (año_inicio, año_fin) por experimento.
+    http_session = session or get_http_session()
+    raw_data = {}
+    t0 = time.time()
+    total_docs = 0
 
-    Returns
-    -------
-    tuple (pandas.DataFrame, dict)
-        df : DataFrame con columnas por variable, score y complete.
-        stats : Diccionario con estadísticas globales de ESGF.
+    for exp in experiments:
+        raw_data[exp] = {}
+        for var in variables:
+            docs, num_found = fetch_variable_experiment(var, exp, session=http_session)
+            raw_data[exp][var] = docs
+            total_docs += len(docs)
+            print(f"   - {exp:12s} {var:6s} -> {len(docs):4d} datasets (reportados por ESGF: {num_found:4d})")
+
+    elapsed = time.time() - t0
+    print("-" * 70)
+    print(f"[OK] Descarga de metadatos completada en {elapsed:.1f}s. Total datasets: {total_docs:,}")
+
+    # Guardar en caché JSON
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(raw_data, f)
+        print(f"[OK] Caché de metadatos guardado exitosamente: '{cache_path}'")
+    except Exception as e:
+        print(f"[ADVERTENCIA] No se pudo guardar archivo de caché: {e}")
+
+    return raw_data
+
+
+def load_raw_datasets_from_cache(cache_path=CACHE_FILE_DATASETS):
+    """Carga los metadatos crudos desde el archivo de caché JSON."""
+    if not os.path.exists(cache_path):
+        return None
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        print(f"[ADVERTENCIA] Error al leer caché '{cache_path}': {e}")
+        return None
+
+
+def build_inventory_from_raw(raw_data, experiments, variables, period_ranges):
+    """
+    Procesa los metadatos crudos de datasets aplicando el filtrado por período
+    de interés para construir la matriz de disponibilidad.
     """
     inventory = defaultdict(set)
-    total_numfound = 0
-    total_downloaded = 0
+    total_docs_processed = 0
     discarded_out_of_period = 0
 
-    ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
+    for exp in experiments:
+        exp_data = raw_data.get(exp, {})
+        for var in variables:
+            docs = exp_data.get(var, [])
+            total_docs_processed += len(docs)
 
-    for experiment in EXPERIMENTS:
-        print()
-        print("=" * 70)
-        req_p = ranges.get(experiment, "Sin filtro")
-        print(f"Procesando experimento: {experiment} (Período de interés: {req_p})")
-        print("=" * 70)
-
-        for variable in VARIABLES:
-            docs, num_found = fetch_variable_experiment(variable, experiment, session=session)
-
-            if num_found > 9999:
-                raise RuntimeError(
-                    f"{experiment}-{variable}: {num_found} resultados exceden el límite ESGF (9999)"
-                )
-
-            total_numfound += num_found
-            total_downloaded += len(docs)
-
-            valid_in_period = 0
             for doc in docs:
-                if is_dataset_in_period(doc, experiment, period_ranges=ranges):
+                if is_dataset_in_period(doc, exp, period_ranges):
                     source_id = first(doc.get("source_id"))
                     variant_label = first(doc.get("variant_label"))
                     experiment_id = first(doc.get("experiment_id"))
                     variable_id = first(doc.get("variable_id"))
 
-                    key = (source_id, variant_label, experiment_id)
-                    inventory[key].add(variable_id)
-                    valid_in_period += 1
+                    if source_id and variant_label and experiment_id and variable_id:
+                        key = (source_id, variant_label, experiment_id)
+                        inventory[key].add(variable_id)
                 else:
                     discarded_out_of_period += 1
-
-            print(
-                f"{experiment:10s} "
-                f"{variable:5s} "
-                f"numFound={num_found:5d} "
-                f"en_periodo={valid_in_period:5d}"
-            )
 
     rows = []
     for key, vars_found in inventory.items():
         source_id, variant_label, experiment_id = key
-        req_p = ranges.get(experiment_id)
+        req_p = period_ranges.get(experiment_id)
         p_str = f"{req_p[0]}-{req_p[1]}" if req_p else "N/A"
 
         row = {
@@ -405,59 +373,39 @@ def build_inventory(session=None, period_ranges=None):
             "period_range": p_str,
         }
 
-        for var in VARIABLES:
+        for var in variables:
             row[var] = var in vars_found
 
         row["score"] = len(vars_found)
-        row["complete"] = row["score"] == len(VARIABLES)
+        row["complete"] = row["score"] == len(variables)
         row["period_available"] = row["complete"]
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    # Ordenar primero por disponibilidad en período (TRUE arriba) y luego alfabéticamente
-    df = df.sort_values(
-        by=["period_available", "source_id", "variant_label", "experiment_id"],
-        ascending=[False, True, True, True]
-    )
+    if not df.empty:
+        df = df.sort_values(
+            by=["period_available", "source_id", "variant_label", "experiment_id"],
+            ascending=[False, True, True, True]
+        )
 
     stats = {
-        "total_numfound": total_numfound,
-        "total_downloaded": total_downloaded,
+        "total_docs_processed": total_docs_processed,
         "discarded_out_of_period": discarded_out_of_period,
         "inventory_rows": len(df),
         "unique_models": df["source_id"].nunique() if not df.empty else 0,
     }
 
-    print()
-    print("=" * 70)
-    print("RESUMEN ESGF (DATASETS EN PERÍODO DE INTERÉS)")
-    print("=" * 70)
-    print(f"Documentos reportados por ESGF : {stats['total_numfound']:,}")
-    print(f"Documentos descargados         : {stats['total_downloaded']:,}")
-    print(f"Datasets fuera de período      : {stats['discarded_out_of_period']:,}")
-    print(f"Filas inventario válidas      : {stats['inventory_rows']:,}")
-    print(f"Modelos únicos                : {stats['unique_models']:,}")
-    print("=" * 70)
-    print()
-
     return df, stats
 
 
-def build_summary(df):
+def build_summary(df, experiments, variables, gcmeval_set=None):
     """
-    Consolida la disponibilidad a nivel de (source_id, variant_label).
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        DataFrame generado por build_inventory.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Resumen consolidado con métricas de completitud y disponibilidad de período.
+    Consolida la disponibilidad por (source_id, variant_label) y cruza con GCMEval.
     """
-    max_possible = len(VARIABLES) * len(EXPERIMENTS)
+    max_possible = len(variables) * len(experiments)
+
+    if df.empty:
+        return pd.DataFrame()
 
     summary = (
         df.groupby(["source_id", "variant_label"])
@@ -468,60 +416,34 @@ def build_summary(df):
         .reset_index()
     )
 
-    summary["availability_pct"] = 100.0 * summary["total_variables"] / max_possible
-    summary["all_experiments_complete"] = summary["complete_experiments"] == len(EXPERIMENTS)
+    summary["availability_pct"] = (100.0 * summary["total_variables"] / max_possible).round(2)
+    summary["all_experiments_complete"] = summary["complete_experiments"] == len(experiments)
     summary["period_available"] = summary["all_experiments_complete"]
+
+    # Cruce con GCMEval
+    if gcmeval_set:
+        summary["model_pipe"] = summary["source_id"].astype(str) + "|" + summary["variant_label"].astype(str)
+        summary["model_dot"] = summary["source_id"].astype(str) + "." + summary["variant_label"].astype(str)
+        summary["gcmeval"] = summary["model_pipe"].isin(gcmeval_set) | summary["model_dot"].isin(gcmeval_set)
+        summary = summary.drop(columns=["model_pipe", "model_dot"])
+    else:
+        summary["gcmeval"] = False
 
     # Ordenar primero por modelos que cumplen todas las condiciones (TRUE primero) y luego alfabéticamente
     summary = summary.sort_values(
-        by=["period_available", "source_id", "variant_label"],
-        ascending=[False, True, True],
+        by=["period_available", "gcmeval", "source_id", "variant_label"],
+        ascending=[False, False, True, True],
     )
 
     return summary
 
 
 # ---------------------------------------------------------------------
-# FASE 2: Consulta y Extracción de Archivos NetCDF (type=File)
+# Consulta de Archivos NetCDF (Fase 2)
 # ---------------------------------------------------------------------
 
 def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
-    """
-    Parsea un documento Solr de tipo File (type=File) y extrae las URLs directas,
-    metadatos de hash, tamaño y determina el método de acceso y prioridad de réplica.
-
-    Estructura del campo 'url' en ESGF Solr:
-        ["<URL>|<MIME_TYPE>|<SERVICE_TYPE>", ...]
-
-    Servicios comunes en ESGF:
-        - 'HTTPServer': Enlace directo HTTP/HTTPS al archivo NetCDF.
-          Si está alojado en nodos con Globus (ej. eagle.alcf.anl.gov o LLNL),
-          la URL apunta a 'https://*.data.globus.org/...'.
-        - 'Globus': Enlace nativo 'globus:<endpoint-uuid>/ruta'.
-        - 'OPENDAP': Enlace a servicio OPeNDAP.
-        - 'GridFTP': Enlace gsiftp.
-
-    Ranking de prioridad para réplicas:
-        - Prioridad 3 (Máxima): HTTPS directas de Globus (*.data.globus.org) o
-          nodos con acceso Globus activo + HTTPS.
-        - Prioridad 2: URLs HTTPS seguras de THREDDS (https://...).
-        - Prioridad 1: URLs HTTP estándar de THREDDS (http://...).
-        - Prioridad 0: Otros accesos sin URL HTTP/HTTPS directa.
-
-    Parameters
-    ----------
-    doc : dict
-        Documento JSON de Solr para un archivo.
-    source_id : str
-    variant_label : str
-    experiment_id : str
-    variable_id : str
-
-    Returns
-    -------
-    dict
-        Metadatos parseados del archivo con puntaje de prioridad.
-    """
+    """Parsea un documento Solr de tipo File y determina la mejor URL y método de acceso."""
     file_name = doc.get("title") or doc.get("instance_id")
     dataset_id = doc.get("dataset_id")
     instance_id = doc.get("instance_id")
@@ -559,7 +481,6 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
             elif "globus" in service_lower or link.startswith("globus:"):
                 globus_native_uri = link
 
-    # Determinar la mejor URL HTTPS directa y el método de acceso
     if https_globus_url:
         selected_url = https_globus_url
         access_method = "HTTPS (Globus)"
@@ -602,29 +523,7 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
 
 
 def fetch_files_for_combination(source_id, variant_label, experiment_id, variable_id, session=None, period_ranges=None):
-    """
-    Consulta a ESGF Solr todos los archivos NetCDF correspondientes a una combinación
-    específica de modelo, variante, experimento y variable, aplicando filtrado por
-    período de interés.
-
-    Maneja réplicas entre diferentes data nodes seleccionando para cada archivo
-    físico único la copia con mayor prioridad (Globus HTTPS > HTTPS > HTTP).
-
-    Parameters
-    ----------
-    source_id : str
-    variant_label : str
-    experiment_id : str
-    variable_id : str
-    session : requests.Session, optional
-    period_ranges : dict, optional
-
-    Returns
-    -------
-    tuple (list of dict, bool)
-        files : Lista de registros de archivos únicos seleccionados.
-        success : True si la consulta fue exitosa, False en caso de error.
-    """
+    """Consulta archivos NetCDF para una combinación aplicando filtrado por período."""
     http = session or requests
     offset = 0
     docs_all = []
@@ -669,8 +568,6 @@ def fetch_files_for_combination(source_id, variant_label, experiment_id, variabl
     if not docs_all:
         return [], True
 
-    # Deduplicar réplicas del mismo archivo físico (identificado por file_name)
-    # seleccionando la réplica con el mayor priority_rank
     best_file_by_name = {}
     for doc in docs_all:
         parsed = parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id)
@@ -679,12 +576,10 @@ def fetch_files_for_combination(source_id, variant_label, experiment_id, variabl
         if fname not in best_file_by_name:
             best_file_by_name[fname] = parsed
         else:
-            # Comparar prioridad de la nueva réplica
             if parsed["priority_rank"] > best_file_by_name[fname]["priority_rank"]:
                 best_file_by_name[fname] = parsed
 
-    # Filtrar por período de interés si está configurado
-    ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
+    ranges = period_ranges if period_ranges is not None else DEFAULT_PERIOD_RANGES
     req_range = ranges.get(experiment_id)
 
     filtered_files = []
@@ -695,62 +590,33 @@ def fetch_files_for_combination(source_id, variant_label, experiment_id, variabl
 
         if req_range and s_yr is not None and e_yr is not None:
             req_start, req_end = req_range
-            # Comprobar si el archivo intersecta con el período de interés
             if s_yr <= req_end and e_yr >= req_start:
                 filtered_files.append(f)
         else:
             filtered_files.append(f)
 
-    # Ordenar por nombre de archivo cronológico
     sorted_files = sorted(filtered_files, key=lambda x: x["file_name"] or "")
     return sorted_files, True
 
 
-def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None, period_ranges=None):
-    """
-    Ejecuta la segunda etapa de consulta para extraer el listado completo de archivos
-    NetCDF con URLs directas HTTPS para todas las realizaciones seleccionadas,
-    filtrando únicamente los archivos que pertenecen al período de interés.
-
-    Utiliza concurrencia controlada para consultar de manera eficiente sin saturar Solr.
-
-    Parameters
-    ----------
-    selected_df : pandas.DataFrame
-        DataFrame con las realizaciones seleccionadas (source_id, variant_label).
-    max_workers : int
-        Número de hilos concurrentes para consultas a la API.
-    session : requests.Session, optional
-    period_ranges : dict, optional
-        Diccionario con rangos (año_inicio, año_fin) por experimento.
-
-    Returns
-    -------
-    tuple (pandas.DataFrame, list)
-        files_df : DataFrame con todos los archivos NetCDF y URLs dentro del período.
-        unresolved : Lista de combinaciones que no pudieron resolverse o sin archivos en el período.
-    """
+def build_files_inventory(selected_df, experiments=DEFAULT_EXPERIMENTS, variables=DEFAULT_VARIABLES,
+                          max_workers=MAX_WORKERS, session=None, period_ranges=DEFAULT_PERIOD_RANGES):
+    """Consulta detallada de archivos NetCDF para las realizaciones seleccionadas."""
     print()
     print("=" * 70)
     print("FASE 2: CONSULTA DETALLADA DE ARCHIVOS NETCDF (FILTRADO POR PERÍODO)")
     print(f"Realizaciones seleccionadas a procesar: {len(selected_df)}")
-    print(f"Total combinaciones dataset teóricas: {len(selected_df) * len(EXPERIMENTS) * len(VARIABLES):,}")
-    print("Períodos de interés configurados:")
-    eff_ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
-    for exp_k, r_v in eff_ranges.items():
-        print(f"   - {exp_k:12s}: {r_v[0]} a {r_v[1]}")
+    print(f"Total combinaciones dataset teóricas: {len(selected_df) * len(experiments) * len(variables):,}")
     print("=" * 70)
-    print()
 
     http_session = session or get_http_session()
 
-    # Generar la lista de tareas: (source_id, variant_label, experiment_id, variable_id)
     tasks = []
     for _, row in selected_df.iterrows():
         s_id = row["source_id"]
         v_lbl = row["variant_label"]
-        for exp in EXPERIMENTS:
-            for var in VARIABLES:
+        for exp in experiments:
+            for var in variables:
                 tasks.append((s_id, v_lbl, exp, var))
 
     total_tasks = len(tasks)
@@ -762,7 +628,7 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None, pe
     def worker_func(task_args):
         src, var_lbl, exp, var = task_args
         files, success = fetch_files_for_combination(
-            src, var_lbl, exp, var, session=http_session, period_ranges=eff_ranges
+            src, var_lbl, exp, var, session=http_session, period_ranges=period_ranges
         )
         return task_args, files, success
 
@@ -799,7 +665,6 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None, pe
     if all_files_records:
         files_df = pd.DataFrame(all_files_records)
 
-        # Calcular tamaño en MB para conveniencia del usuario
         if "file_size_bytes" in files_df.columns:
             files_df["file_size_mb"] = (
                 files_df["file_size_bytes"].fillna(0) / (1024.0 * 1024.0)
@@ -807,35 +672,17 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None, pe
         else:
             files_df["file_size_mb"] = 0.0
 
-        # Texto para hipervínculo en Excel
         files_df["file_link"] = "Abrir"
 
-        # Ordenar columnas lógicamente
         column_order = [
-            "source_id",
-            "variant_label",
-            "experiment_id",
-            "variable_id",
-            "start_year",
-            "end_year",
-            "file_name",
-            "file_link",
-            "https_url",
-            "access_method",
-            "data_node",
-            "file_size_mb",
-            "file_size_bytes",
-            "checksum",
-            "checksum_type",
-            "dataset_id",
-            "instance_id",
-            "master_id",
+            "source_id", "variant_label", "experiment_id", "variable_id",
+            "start_year", "end_year", "file_name", "file_link", "https_url",
+            "access_method", "data_node", "file_size_mb", "file_size_bytes",
+            "checksum", "checksum_type", "dataset_id", "instance_id", "master_id",
         ]
-        # Asegurar que todas las columnas existan
         existing_cols = [c for c in column_order if c in files_df.columns]
         extra_cols = [c for c in files_df.columns if c not in column_order and c not in ("priority_rank", "has_globus")]
         files_df = files_df[existing_cols + extra_cols]
-
         files_df = files_df.sort_values(
             ["source_id", "variant_label", "experiment_id", "variable_id", "file_name"]
         )
@@ -845,25 +692,10 @@ def build_files_inventory(selected_df, max_workers=MAX_WORKERS, session=None, pe
     return files_df, unresolved_combinations
 
 
-def validate_files_inventory(files_df, selected_df, unresolved_combinations, period_ranges=None):
-    """
-    Ejecuta una rutina de validación que calcula y muestra estadísticas clave de los
-    archivos extraídos, incluyendo verificación de cobertura temporal:
-        - Cantidad de combinaciones procesadas vs esperadas
-        - Total de archivos NetCDF encontrados en período
-        - Archivos con URL HTTPS directa
-        - Archivos con acceso Globus
-        - Combinaciones no resueltas o sin datos en período
-        - Cobertura temporal completa por dataset (min_yr <= inicio, max_yr >= fin)
-
-    Parameters
-    ----------
-    files_df : pandas.DataFrame
-    selected_df : pandas.DataFrame
-    unresolved_combinations : list
-    period_ranges : dict, optional
-    """
-    total_expected_datasets = len(selected_df) * len(EXPERIMENTS) * len(VARIABLES)
+def validate_files_inventory(files_df, selected_df, unresolved_combinations, experiments=DEFAULT_EXPERIMENTS,
+                             variables=DEFAULT_VARIABLES, period_ranges=DEFAULT_PERIOD_RANGES):
+    """Valida y reporta estadísticas clave de los archivos extraídos."""
+    total_expected_datasets = len(selected_df) * len(experiments) * len(variables)
     total_files = len(files_df)
 
     if not files_df.empty:
@@ -894,8 +726,6 @@ def validate_files_inventory(files_df, selected_df, unresolved_combinations, per
     print(f"Volumen total catalogado               : {total_size_gb:,.2f} GB")
     print("=" * 70)
 
-    # Validación de Cobertura Temporal por Dataset
-    ranges = period_ranges if period_ranges is not None else PERIOD_RANGES
     if not files_df.empty and "start_year" in files_df.columns:
         combos = files_df.groupby(["source_id", "variant_label", "experiment_id", "variable_id"]).agg(
             min_yr=("start_year", "min"),
@@ -906,7 +736,7 @@ def validate_files_inventory(files_df, selected_df, unresolved_combinations, per
         incomplete_temporal = []
         for _, row in combos.iterrows():
             exp = row["experiment_id"]
-            req_r = ranges.get(exp)
+            req_r = period_ranges.get(exp)
             if req_r:
                 req_s, req_e = req_r
                 if row["min_yr"] > req_s or row["max_yr"] < req_e:
@@ -938,51 +768,46 @@ def validate_files_inventory(files_df, selected_df, unresolved_combinations, per
 
 
 # ---------------------------------------------------------------------
-# Exportación Excel y CSV con Formato
+# Exportación Excel y CSV
 # ---------------------------------------------------------------------
 
-def export_results(df, summary, selected, files_df,
+def export_results(df, summary, selected, files_df, variables=DEFAULT_VARIABLES,
                    csv_inventory="cmip6_daily_inventory.csv",
                    csv_files="cmip6_files.csv",
                    csv_complete_models="cmip6_complete_models.csv",
+                   csv_selected_models="selected_models.csv",
                    xlsx_file="cmip6_daily_inventory.xlsx"):
-    """
-    Exporta el inventario, resumen, seleccionados y archivos a archivos CSV y Excel,
-    aplicando hipervínculos dinámicos y formato condicional con openpyxl.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Inventario detallado.
-    summary : pandas.DataFrame
-        Resumen por modelo-realización.
-    selected : pandas.DataFrame
-        Realizaciones completas seleccionadas.
-    files_df : pandas.DataFrame
-        Catálogo detallado de archivos NetCDF.
-    csv_inventory : str
-    csv_files : str
-    csv_complete_models : str
-    xlsx_file : str
-    """
-    # Guardar CSVs
+    """Exporta inventarios, resúmenes y catálogos en CSV y Excel estilizado."""
     df.to_csv(csv_inventory, index=False)
-    print(f"Inventario CSV guardado: {csv_inventory}")
+    print(f"[OK] Inventario CSV guardado: {csv_inventory}")
 
     if not files_df.empty:
         files_df.to_csv(csv_files, index=False)
-        print(f"Catálogo de archivos CSV guardado: {csv_files}")
+        print(f"[OK] Catálogo de archivos CSV guardado: {csv_files}")
 
-    # Exportar CSV con los nombres de los modelos que cumplen todas las condiciones en formato NOMBRE.variante (sin encabezado)
-    complete_models_df = summary[summary["period_available"] == True].copy()
-    complete_models_df["model"] = complete_models_df["source_id"].astype(str) + "." + complete_models_df["variant_label"].astype(str)
-    complete_models_df = complete_models_df.sort_values("model")
+    # Exportar CSV con modelos 100% completos y verificados con GCMEval (sin encabezado)
+    if not selected.empty:
+        selected_export = selected.copy()
+        selected_export["model"] = selected_export["source_id"].astype(str) + "." + selected_export["variant_label"].astype(str)
+        selected_export = selected_export.sort_values("model")
 
-    complete_models_df[["model"]].to_csv(csv_complete_models, index=False, header=False)
-    print(f"Listado de modelos completos CSV guardado ({len(complete_models_df)} modelos, sin encabezado): {csv_complete_models}")
+        # Guardar en cmip6_complete_models.csv
+        selected_export[["model"]].to_csv(csv_complete_models, index=False, header=False)
+        print(f"[OK] Modelos completos y en GCMEval ({len(selected_export)} modelos, sin encabezado): {csv_complete_models}")
+
+        # Guardar copia en directorio gcmeval/
+        gcmeval_dir = os.path.dirname(locate_gcmeval_file() or "gcmeval") or "gcmeval"
+        if os.path.exists(gcmeval_dir):
+            gcmeval_target = os.path.join(gcmeval_dir, os.path.basename(csv_complete_models))
+            selected_export[["model"]].to_csv(gcmeval_target, index=False, header=False)
+            print(f"[OK] Copia guardada en subdirectorio gcmeval: {gcmeval_target}")
+
+        # Guardar también en selected_models.csv para uso directo en generate_manifest.py
+        selected_export[["model"]].to_csv(csv_selected_models, index=False, header=False)
+        print(f"[OK] Lista para generador de manifiestos guardada: {csv_selected_models}")
 
     if not OPENPYXL_AVAILABLE:
-        print("[AVISO] openpyxl no está instalado en este entorno; se exportará Excel básico sin formato.")
+        print("[AVISO] openpyxl no está instalado; se exportará Excel básico sin formato.")
         try:
             with pd.ExcelWriter(xlsx_file) as writer:
                 df.to_excel(writer, sheet_name="inventory", index=False)
@@ -990,12 +815,11 @@ def export_results(df, summary, selected, files_df,
                 selected.to_excel(writer, sheet_name="selected", index=False)
                 if not files_df.empty:
                     files_df.to_excel(writer, sheet_name="files", index=False)
-            print(f"Libro Excel guardado: {xlsx_file}")
+            print(f"[OK] Libro Excel guardado: {xlsx_file}")
         except Exception as e:
             print(f"[ERROR] No se pudo guardar Excel: {e}")
         return
 
-    # Guardar Excel estilizado con openpyxl
     try:
         with pd.ExcelWriter(xlsx_file, engine="openpyxl") as writer:
             df.to_excel(writer, sheet_name="inventory", index=False)
@@ -1005,13 +829,12 @@ def export_results(df, summary, selected, files_df,
             if not files_df.empty:
                 files_df.to_excel(writer, sheet_name="files", index=False)
 
-            # Estilos de celda
             green_fill = PatternFill(fill_type="solid", start_color="C6EFCE", end_color="C6EFCE")
             red_fill = PatternFill(fill_type="solid", start_color="FFC7CE", end_color="FFC7CE")
 
-            # Formato condicional en 'inventory'
+            # Formato en 'inventory'
             ws_inventory = writer.sheets["inventory"]
-            var_cols = [i for i, cell in enumerate(ws_inventory[1], start=1) if cell.value in VARIABLES]
+            var_cols = [i for i, cell in enumerate(ws_inventory[1], start=1) if cell.value in variables]
             comp_cols = [i for i, cell in enumerate(ws_inventory[1], start=1) if cell.value in ("complete", "period_available")]
 
             for col_num in var_cols + comp_cols:
@@ -1022,7 +845,7 @@ def export_results(df, summary, selected, files_df,
                     elif cell.value is False:
                         cell.fill = red_fill
 
-            # Formato condicional en 'summary'
+            # Formato en 'summary'
             if "summary" in writer.sheets:
                 ws_summary = writer.sheets["summary"]
                 bool_sum_cols = [
@@ -1086,14 +909,117 @@ def export_results(df, summary, selected, files_df,
                             link_cell.hyperlink = str(url_cell.value)
                             link_cell.style = "Hyperlink"
 
-                    # Ocultar la columna con la URL cruda para mantener la vista limpia
                     ws_files.column_dimensions[get_column_letter(f_url_col)].hidden = True
 
-        print(f"Libro Excel guardado exitosamente: {xlsx_file}")
+        print(f"[OK] Libro Excel guardado exitosamente: {xlsx_file}")
     except PermissionError:
         alt_xlsx = f"cmip6_daily_inventory_{int(time.time())}.xlsx"
-        print(f"[ADVERTENCIA] No se pudo escribir '{xlsx_file}' (posiblemente abierto en Excel). Guardando en '{alt_xlsx}'...")
-        export_results(df, summary, selected, files_df, csv_inventory, csv_files, csv_complete_models, alt_xlsx)
+        print(f"[ADVERTENCIA] No se pudo escribir '{xlsx_file}' (abierto en Excel). Guardando en '{alt_xlsx}'...")
+        export_results(df, summary, selected, files_df, variables, csv_inventory, csv_files, csv_complete_models, csv_selected_models, alt_xlsx)
+
+
+# ---------------------------------------------------------------------
+# Menú y Flujo Interactivo en Consola
+# ---------------------------------------------------------------------
+
+def prompt_choice(prompt_text, default_val="1", is_interactive=True):
+    """Solicita una opción al usuario si la consola es interactiva, o retorna el valor por defecto."""
+    if not is_interactive or not sys.stdin.isatty():
+        return default_val
+    try:
+        ans = input(prompt_text).strip()
+        return ans if ans else default_val
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default_val
+
+
+def interactive_config_wizard(is_interactive=True):
+    """
+    Asistente interactivo en consola para seleccionar la fuente de datos
+    y verificar/personalizar los parámetros de filtrado y períodos.
+    """
+    print()
+    print("=" * 70)
+    print("  INVENTARIO DE DISPONIBILIDAD CMIP6 (ESGF METAGRID & GCMEVAL)  ")
+    print("=" * 70)
+    print()
+
+    # 1. Comprobación de Caché Local
+    cache_exists = os.path.exists(CACHE_FILE_DATASETS)
+    use_cache = False
+
+    if cache_exists:
+        mtime = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(CACHE_FILE_DATASETS)))
+        size_mb = os.path.getsize(CACHE_FILE_DATASETS) / (1024.0 * 1024.0)
+        print("1. FUENTE DE METADATOS ESGF")
+        print("-" * 70)
+        print(f"Se encontró un archivo de caché local: '{CACHE_FILE_DATASETS}' ({size_mb:.2f} MB, guardado el {mtime})")
+        print("   [1] Usar metadatos locales en caché (Rápido, sin conexión a internet) [POR DEFECTO]")
+        print("   [2] Realizar nueva consulta a la API de ESGF MetaGrid (Descargar y actualizar caché)")
+        ans = prompt_choice("Selecciona una opción [1/2] (Enter = 1): ", default_val="1", is_interactive=is_interactive)
+        use_cache = (ans == "1")
+    else:
+        print("1. FUENTE DE METADATOS ESGF")
+        print("-" * 70)
+        print("No se encontró caché local. Se consultará la API de ESGF MetaGrid y se guardará una copia local.")
+        use_cache = False
+
+    print()
+
+    # 2. Resumen y Confirmación de Parámetros
+    period_ranges = dict(DEFAULT_PERIOD_RANGES)
+    experiments = list(DEFAULT_EXPERIMENTS)
+    variables = list(DEFAULT_VARIABLES)
+
+    gcmeval_file = locate_gcmeval_file()
+
+    print("2. RESUMEN DE PARÁMETROS DE FILTRADO")
+    print("-" * 70)
+    print(f"• Frecuencia / Tabla   : {TABLE_ID}")
+    print(f"• Variables ({len(variables):2d})        : {', '.join(variables)}")
+    print(f"• Experimentos ({len(experiments):2d})     : {', '.join(experiments)}")
+    print("• Períodos de Interés  :")
+    for exp_k, r_v in period_ranges.items():
+        print(f"     - {exp_k:12s}: {r_v[0]} a {r_v[1]}")
+    if gcmeval_file:
+        print(f"• Catálogo GCMEval     : '{gcmeval_file}' [DETECTADO Y ACTIVO]")
+    else:
+        print("• Catálogo GCMEval     : [NO ENCONTRADO en gcmeval/gcmeval_models.csv]")
+
+    print("-" * 70)
+    print("   [1] Continuar con estos parámetros [POR DEFECTO]")
+    print("   [2] Personalizar años de los períodos de interés")
+    print("   [3] Personalizar lista de experimentos y variables")
+    ans_p = prompt_choice("Selecciona una opción [1/2/3] (Enter = 1): ", default_val="1", is_interactive=is_interactive)
+
+    if ans_p == "2":
+        print()
+        print("--- Personalización de Períodos de Interés ---")
+        h_start = prompt_choice(f"Año inicio historical [{period_ranges['historical'][0]}]: ", str(period_ranges['historical'][0]), is_interactive)
+        h_end = prompt_choice(f"Año fin historical [{period_ranges['historical'][1]}]: ", str(period_ranges['historical'][1]), is_interactive)
+        period_ranges["historical"] = (int(h_start), int(h_end))
+
+        s_start = prompt_choice(f"Año inicio escenarios SSP [{period_ranges['ssp126'][0]}]: ", str(period_ranges['ssp126'][0]), is_interactive)
+        s_end = prompt_choice(f"Año fin escenarios SSP [{period_ranges['ssp126'][1]}]: ", str(period_ranges['ssp126'][1]), is_interactive)
+        for exp in ["ssp126", "ssp245", "ssp370", "ssp585"]:
+            period_ranges[exp] = (int(s_start), int(s_end))
+
+        print(f"[OK] Períodos actualizados: historical={period_ranges['historical']}, SSPs=({s_start}, {s_end})")
+
+    elif ans_p == "3":
+        print()
+        print("--- Personalización de Experimentos y Variables ---")
+        exp_input = prompt_choice(f"Experimentos separados por coma [{','.join(experiments)}]: ", ",".join(experiments), is_interactive)
+        experiments = [e.strip() for e in exp_input.split(",") if e.strip()]
+
+        var_input = prompt_choice(f"Variables separadas por coma [{','.join(variables)}]: ", ",".join(variables), is_interactive)
+        variables = [v.strip() for v in var_input.split(",") if v.strip()]
+        print(f"[OK] Experimentos: {experiments}")
+        print(f"[OK] Variables: {variables}")
+
+    print()
+    return use_cache, period_ranges, experiments, variables, gcmeval_file
 
 
 # ---------------------------------------------------------------------
@@ -1101,87 +1027,139 @@ def export_results(df, summary, selected, files_df,
 # ---------------------------------------------------------------------
 
 def main():
-    """
-    Flujo principal de ejecución:
-        1. Construcción del inventario global de datasets ESGF.
-        2. Resumen y cruce con GCMEval.
-        3. Selección de realizaciones completas.
-        4. Consulta detallada de archivos NetCDF para realizaciones seleccionadas.
-        5. Validación y exportación en CSV y Excel.
-    """
-    print()
-    print("=" * 70)
-    print("INICIANDO INVENTARIO Y EXTRACCIÓN DE ARCHIVOS CMIP6 (ESGF METAGRID)")
-    print("=" * 70)
-    print()
+    parser = argparse.ArgumentParser(description="CMIP6 Availability Inventory & NetCDF Builder")
+    parser.add_argument("--batch", "--no-interactive", action="store_true", help="Ejecutar en modo no interactivo con valores por defecto")
+    parser.add_argument("--use-cache", action="store_true", help="Forzar el uso de la caché local")
+    parser.add_argument("--refresh-cache", action="store_true", help="Forzar la recarga desde la API de ESGF")
+    parser.add_argument("--skip-files", action="store_true", help="Omitir la Fase 2 (consulta detallada de archivos NetCDF)")
+    args = parser.parse_args()
+
+    is_interactive = not args.batch
+
+    # 1. Asistente interactivo
+    if args.refresh_cache:
+        use_cache = False
+        period_ranges = dict(DEFAULT_PERIOD_RANGES)
+        experiments = list(DEFAULT_EXPERIMENTS)
+        variables = list(DEFAULT_VARIABLES)
+        gcmeval_file = locate_gcmeval_file()
+    elif args.use_cache:
+        use_cache = True
+        period_ranges = dict(DEFAULT_PERIOD_RANGES)
+        experiments = list(DEFAULT_EXPERIMENTS)
+        variables = list(DEFAULT_VARIABLES)
+        gcmeval_file = locate_gcmeval_file()
+    else:
+        use_cache, period_ranges, experiments, variables, gcmeval_file = interactive_config_wizard(is_interactive=is_interactive)
 
     session = get_http_session()
 
-    # Fase 1: Inventario
-    df, stats = build_inventory(session=session)
-    summary = build_summary(df)
-
-    # Cruce con GCMEval
-    if os.path.exists("gcmeval_models.csv"):
-        try:
-            gcmeval_set = set()
-            with open("gcmeval_models.csv", "r", encoding="utf-8") as f:
-                for line in f:
-                    l = line.strip()
-                    if not l or l.startswith("#"):
-                        continue
-                    if l.lower() in ("model", "modelo", "source_id,variant_label", "source_id.variant_label"):
-                        continue
-                    if "," in l:
-                        parts = l.split(",")
-                        s_id, v_lbl = parts[0].strip(), parts[1].strip()
-                    elif "." in l:
-                        parts = l.rsplit(".", 1)
-                        s_id, v_lbl = parts[0].strip(), parts[1].strip()
-                    else:
-                        s_id, v_lbl = l, ""
-                    if s_id and v_lbl:
-                        gcmeval_set.add(f"{s_id}|{v_lbl}")
-                        gcmeval_set.add(f"{s_id}.{v_lbl}")
-
-            summary["model_pipe"] = summary["source_id"].astype(str) + "|" + summary["variant_label"].astype(str)
-            summary["model_dot"] = summary["source_id"].astype(str) + "." + summary["variant_label"].astype(str)
-            summary["gcmeval"] = summary["model_pipe"].isin(gcmeval_set) | summary["model_dot"].isin(gcmeval_set)
-            summary = summary.drop(columns=["model_pipe", "model_dot"])
-        except Exception as e:
-            print(f"[ADVERTENCIA] Error al procesar gcmeval_models.csv: {e}")
-            summary["gcmeval"] = False
+    # 2. Cargar o descargar metadatos crudos de datasets
+    raw_data = None
+    if use_cache:
+        print(f"Cargando metadatos crudos desde caché '{CACHE_FILE_DATASETS}'...")
+        raw_data = load_raw_datasets_from_cache(CACHE_FILE_DATASETS)
+        if not raw_data:
+            print("[AVISO] No se pudo cargar la caché. Procediendo a descargar desde ESGF...")
+            raw_data = download_all_raw_datasets(experiments, variables, session=session)
     else:
-        print("[AVISO] gcmeval_models.csv no encontrado; omitiendo cruce con GCMEval.")
-        summary["gcmeval"] = False
+        raw_data = download_all_raw_datasets(experiments, variables, session=session)
 
-    # Filtrar realizaciones seleccionadas (completitud total en todos los experimentos)
-    selected = summary[summary["complete_experiments"] == len(EXPERIMENTS)].copy()
-    selected["dataset_url"] = selected.apply(
-        lambda row: build_metagrid_url(row["source_id"], row["variant_label"]),
-        axis=1,
-    )
-    selected["metagrid"] = "Abrir"
+    # 3. Construir Inventario filtrado por período
+    print()
+    print("=" * 70)
+    print("PROCESANDO MATRIZ DE DISPONIBILIDAD CON FILTRADO POR PERÍODO")
+    print("=" * 70)
+    df, stats = build_inventory_from_raw(raw_data, experiments, variables, period_ranges)
+    print(f"Documentos Solr evaluados    : {stats['total_docs_processed']:,}")
+    print(f"Datasets fuera de período    : {stats['discarded_out_of_period']:,}")
+    print(f"Combinaciones válidas        : {stats['inventory_rows']:,}")
+    print(f"Modelos únicos identificados : {stats['unique_models']:,}")
+    print("=" * 70)
 
-    # Fase 2: Archivos NetCDF de las realizaciones seleccionadas
-    files_df, unresolved = build_files_inventory(
-        selected_df=selected,
-        max_workers=MAX_WORKERS,
-        session=session,
-    )
+    # 4. Cruce y Validación con GCMEval
+    gcmeval_set, gcmeval_path = load_gcmeval_models(gcmeval_file)
+    summary = build_summary(df, experiments, variables, gcmeval_set=gcmeval_set)
 
-    # Validación estadística
-    validate_files_inventory(files_df, selected, unresolved)
+    # 5. Filtrar realizaciones completas (100% variables y experimentos en período Y verificadas en GCMEval)
+    all_complete = summary[summary["all_experiments_complete"] == True]
+    gcmeval_complete = summary[(summary["all_experiments_complete"] == True) & (summary["gcmeval"] == True)].copy()
 
-    # Exportación
+    # Si hay catálogo GCMEval, se seleccionan estrictamente los modelos que están en GCMEval
+    if gcmeval_set:
+        selected = gcmeval_complete.copy()
+    else:
+        selected = all_complete.copy()
+
+    if not selected.empty:
+        selected["dataset_url"] = selected.apply(
+            lambda row: build_metagrid_url(row["source_id"], row["variant_label"], experiments, variables),
+            axis=1,
+        )
+        selected["metagrid"] = "Abrir"
+
+    print()
+    print("=" * 70)
+    print("FLUJO DE FILTRADO Y DISPONIBILIDAD (ESGF METAGRID -> GCMEVAL)")
+    print("=" * 70)
+    n_esgf_models = stats['unique_models']
+    n_esgf_realizations = len(summary)
+    n_complete_models = all_complete['source_id'].nunique() if not all_complete.empty else 0
+    n_complete_realizations = len(all_complete)
+    n_gcmeval_catalog = len([x for x in gcmeval_set if "." in x]) if gcmeval_set else 0
+    n_selected_models = selected['source_id'].nunique() if not selected.empty else 0
+    n_selected_realizations = len(selected)
+
+    print(f"1. UNIVERSO ESGF / METAGRID:")
+    print(f"   • Familias de modelos detectadas             : {n_esgf_models:,}")
+    print(f"   • Realizaciones totales evaluadas            : {n_esgf_realizations:,}")
+    print()
+    print(f"2. CRITERIO DE DISPONIBILIDAD TÉCNICA ESGF (10 vars × 5 exps en período):")
+    print(f"   • Familias con al menos 1 corrida completa   : {n_complete_models:,}")
+    print(f"   • Realizaciones 100% completas en período    : {n_complete_realizations:,}")
+    print()
+    print(f"3. SUB-CONJUNTO VALIDADO EN GCMEVAL ('{os.path.basename(gcmeval_path or 'gcmeval_models.csv')}'):")
+    print(f"   • Universo objetivo definido en GCMEval      : {n_gcmeval_catalog:,} realizaciones")
+    print(f"   • Familias seleccionadas (ESGF + GCMEval)    : {n_selected_models:,}")
+    print(f"   • Realizaciones seleccionadas finales        : {n_selected_realizations:,} [100% COMPLETAS Y EN GCMEVAL]")
+    print("=" * 70)
+
+    if not selected.empty:
+        print("\nModelos Seleccionados (100% completos en período y en GCMEval):")
+        for idx, (_, r) in enumerate(selected.iterrows(), start=1):
+            print(f"   {idx:2d}. {r['source_id']}.{r['variant_label']} (GCMEval: {r['gcmeval']})")
+    print()
+
+    # 6. Fase 2: Consulta detallada de archivos NetCDF (opcional o automática)
+    files_df = pd.DataFrame()
+    unresolved = []
+
+    if not args.skip_files and not selected.empty:
+        files_df, unresolved = build_files_inventory(
+            selected_df=selected,
+            experiments=experiments,
+            variables=variables,
+            max_workers=MAX_WORKERS,
+            session=session,
+            period_ranges=period_ranges,
+        )
+        validate_files_inventory(files_df, selected, unresolved, experiments, variables, period_ranges)
+
+    # 7. Exportación de Resultados
+    print()
+    print("=" * 70)
+    print("EXPORTANDO RESULTADOS")
+    print("=" * 70)
     export_results(
         df=df,
         summary=summary,
         selected=selected,
         files_df=files_df,
+        variables=variables,
         csv_inventory="cmip6_daily_inventory.csv",
         csv_files="cmip6_files.csv",
         csv_complete_models="cmip6_complete_models.csv",
+        csv_selected_models="selected_models.csv",
         xlsx_file="cmip6_daily_inventory.xlsx",
     )
 
@@ -1189,10 +1167,11 @@ def main():
     print("=" * 70)
     print("PROCESO COMPLETADO EXITOSAMENTE")
     print("=" * 70)
-    print(f"Modelos únicos identificados          : {stats['unique_models']:,}")
-    print(f"Realizaciones completas en período    : {len(selected):,}")
-    print(f"Realizaciones compatibles con GCMEval : {selected['gcmeval'].sum():,}")
-    print(f"Total archivos NetCDF catalogados     : {len(files_df):,}")
+    print("Archivos listos para el flujo de trabajo:")
+    print("   1. cmip6_daily_inventory.xlsx (Inventario Excel)")
+    print("   2. cmip6_complete_models.csv  (Lista de modelos completos y en GCMEval)")
+    print("   3. selected_models.csv        (Entrada para generate_manifest.py)")
+    print("   4. cmip6_files.csv            (Catálogo de archivos NetCDF)")
     print("=" * 70)
     print()
 

@@ -18,9 +18,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Submodules, legacy directories and external tools
-gcmeval/
-results/
+# R environment and cache
+.Rhistory
+.RData
+.Rproj.user/
+.Ruserdata/
 
 # NetCDF, GRIB and climate data binary files
 *.nc
@@ -58,3 +60,5 @@ cmip6_*.csv
 cmip6_*.txt
 cmip6_*.xlsx
 cmip6_*.tsv
+esgf_raw_datasets.json
+*.json.bak
