@@ -123,36 +123,49 @@ def build_comprehensive_word_document(output_path):
         title="SÍNTESIS DE RESULTADOS"
     )
 
-    # 2. Marco Teórico y Sustento Científico
-    doc.add_heading("2. Marco Teórico y Sustento Científico para Centroamérica", level=1)
+    # 2. Marco Teórico, Climatología Dinámica Regional y Referencias Observacionales
+    doc.add_heading("2. Marco Teórico, Climatología Dinámica Regional y Referencias de Evaluación", level=1)
     doc.add_paragraph(
-        "La evaluación de modelos climáticos globales en América Central requiere considerar los procesos meteorológicos "
-        "y forzamientos oceánico-atmosféricos característicos del istmo. Las justificaciones de los experimentos se fundamentan "
-        "en la literatura científica peer-reviewed:"
+        "La evaluación y selección de Modelos Climáticos Globales (GCM) en América Central (dominio IPCC SREX CAM:6) "
+        "no puede fundamentarse en promedios globales o anuales simplificados. Centroamérica es reconocida en el "
+        "Sexto Informe de Evaluación del IPCC (AR6 WGI, Cap. 10 y Atlas Regional) como uno de los 'Hotspots' más vulnerables "
+        "y complejos del planeta debido a su fisiografía estrecha y a la confluencia de forzamientos oceánico-atmosféricos duales "
+        "(Océano Pacífico Tropical Oriental y Mar Caribe / Océano Atlántico Tropical Norte)."
+    )
+
+    doc.add_heading("2.1 Procesos Físicos y Climatología Regional de Centroamérica", level=2)
+    doc.add_paragraph(
+        "Para garantizar que los modelos seleccionados posean alta fidelidad física, el diseño de la evaluación incorpora "
+        "los procesos meteorológicos descritos en la literatura científica peer-reviewed:"
     )
 
     fundamentos = [
-        ("Ciclo Anual Bimodal y Canícula (Mid-Summer Drought - MSD)",
-         "El régimen de precipitación en la vertiente Pacífica de Centroamérica exhibe una estructura bimodal con dos picos de lluvia "
-         "(mayo-junio y septiembre-octubre) separados por una disminución relativa entre julio y agosto conocida como Canícula o Veranillo. "
-         "Magaña et al. (1999) y Maldonado et al. (2016) demostraron que la Canícula resulta de la intensificación del Chorro de Bajo Nivel "
-         "del Caribe (CLLJ) y la divergencia de humedad asociada. Modelar correctamente este ciclo es crítico para el sector agrícola y la hidroelectricidad."),
+        ("Complejidad Topográfica y Efecto Barrera Orográfico",
+         "La Cordillera Central Centroamericana actúa como una barrera orográfica que divide al istmo en dos vertientes climáticas "
+         "contrastantes: la vertiente del Caribe, con precipitaciones abundantes durante casi todo el año producto del ascenso forzado "
+         "de los vientos alisios del noreste, y la vertiente del Pacífico, caracterizada por una marcada estación seca y lluviosa "
+         "(Giorgi et al., 2014; Hidalgo et al., 2017). Los modelos globales deben capturar este marcado gradiente transversal."),
         
-        ("Chorro de Bajo Nivel del Caribe (CLLJ) y Gradientes Costa-Montaña",
-         "Amador (1998, 2008) y Muñoz et al. (2008) documentaron que el CLLJ transporta grandes flujos de humedad desde el Atlántico tropical "
-         "hacia el istmo. La interacción de estos vientos alisios con la estrecha cordillera centroamericana produce fuertes gradientes de precipitación "
-         "entre la vertiente Caribe (húmeda todo el año) y la vertiente Pacífica (con estación seca marcada). Giorgi et al. (2014) y Hidalgo et al. (2017) "
-         "subrayan la necesidad de que los GCM resuelvan adecuadamente estos contrastes espaciales."),
+        ("El Chorro de Bajos Niveles del Caribe (CLLJ - Caribbean Low-Level Jet)",
+         "Amador (1998, 2008) y Muñoz et al. (2008) documentaron que el CLLJ es la principal corriente de transporte de vapor de agua "
+         "hacia Centroamérica. Su aceleración estacional en julio-agosto y en invierno modula la divergencia de humedad y controla "
+         "directamente la intensidad de la precipitación sobre el istmo (Cook & Vizy, 2010; Durán-Quesada et al., 2010)."),
         
-        ("Teleconexiones ENOS y Variabilidad Interanual",
-         "Enfield & Alfaro (1999) y Alfaro (2007) establecieron que las anomalías de temperatura superficial del mar (TSM) en el Pacífico ecuatorial "
-         "(El Niño / Oscilación del Sur) modulan la severidad de las sequías en el Corredor Seco Centroamericano, mientras que La Niña incrementa la "
-         "actividad ciclónica y precipitaciones torrenciales. La métrica de variabilidad interanual evalúa la respuesta de los GCM a estas teleconexiones."),
+        ("Ciclo Anual Bimodal y la Canícula o Veranillo (Mid-Summer Drought - MSD)",
+         "La vertiente Pacífica exhibe un régimen bimodal con dos máximos de precipitación (mayo-junio y septiembre-octubre) separados "
+         "por una disminución relativa de las lluvias en julio-agosto conocida como Canícula o Veranillo (Magaña et al., 1999). "
+         "Maldonado et al. (2016) demostraron que la Canícula resulta de la interacción del CLLJ con anomalías de temperatura superficial "
+         "del mar (TSM). Simular adecuadamente la Canícula es vital para la agricultura de subsistencia y los recursos hídricos."),
         
-        ("Marco de Evaluación Multicriterio (GCMEval)",
-         "Brunner et al. (2020) y Parding et al. (2020) demostraron que promediar modelos climáticos sin considerar su desempeño ni su independencia "
-         "introduce sesgos sistemáticos. El marco GCMEval evalúa sesgo medio (Bias), desviación estándar espacial (SD), correlación de Pearson (SC) "
-         "y error cuadrático medio (RMSE) contra observaciones de referencia (ERA5 y GPCP).")
+        ("Migración de la Zona de Convergencia Intertropical (ZCIT)",
+         "El desplazamiento meridional de la ZCIT define el inicio (mayo) y la finalización (noviembre) de la temporada lluviosa "
+         "en el Pacífico mesoamericano, alcanzando su posición más septentrional en septiembre-octubre durante el pico de actividad "
+         "de ondas del este y ciclones tropicales (Taylor et al., 2012; Vichot-Llano et al., 2021)."),
+        
+        ("Teleconexiones ENOS y Dipolo Térmico de TSM",
+         "Enfield & Alfaro (1999) y Alfaro (2007) establecieron que las fases de El Niño / Oscilación del Sur (ENOS) intensifican "
+         "las sequías en el Corredor Seco Centroamericano, mientras que La Niña produce eventos hidrometeorológicos extremos. "
+         "La evaluación de la variabilidad interanual mide la respuesta de los GCM a estas teleconexiones.")
     ]
 
     for tit, desc in fundamentos:
@@ -164,16 +177,52 @@ def build_comprehensive_word_document(output_path):
         r_t.font.color.rgb = RGBColor(0x1B, 0x36, 0x5D)
         p_f.add_run(desc)
 
-    # 3. Interpretación de Pesos en GCMEval y Diseño de los 9 Experimentos
-    doc.add_heading("3. Configuración de Pesos y Diseño de los 9 Experimentos de Sensibilidad", level=1)
+    doc.add_heading("2.2 Referencias Climatológicas Históricas de Evaluación (1981–2010)", level=2)
     doc.add_paragraph(
-        "En la interfaz analítica de GCMEval, cada dimensión de evaluación (variable, estación del año, métrica de error y región) "
-        "se pondera mediante un esquema de pesos enteros discretos:"
+        "Para evaluar cuantitativamente el desempeño de los modelos en el período histórico común 1981–2010, GCMEval "
+        "utiliza como 'verdad del terreno' (ground truth) los dos conjuntos de datos observacionales de mayor consenso internacional:"
     )
+
+    p_ref1 = doc.add_paragraph()
+    p_ref1.paragraph_format.left_indent = Inches(0.2)
+    p_ref1.paragraph_format.space_after = Pt(4)
+    r_r1 = p_ref1.add_run("1. Temperatura (`tas`) — ERA5 Reanalysis (ECMWF, Hersbach et al., 2020): ")
+    r_r1.bold = True
+    r_r1.font.color.rgb = RGBColor(0x1B, 0x36, 0x5D)
+    p_ref1.add_run(
+        "Reanálisis atmosférico global de 5ª generación con resolución horizontal de ~31 km (0.25°). "
+        "Asimila billones de observaciones satelitales, sondeos y estaciones de superficie, resolviendo con gran precisión "
+        "el balance de radiación, los gradientes térmicos costa-montaña y los ciclos diurnos sobre el relieve centroamericano."
+    )
+
+    p_ref2 = doc.add_paragraph()
+    p_ref2.paragraph_format.left_indent = Inches(0.2)
+    p_ref2.paragraph_format.space_after = Pt(6)
+    r_r2 = p_ref2.add_run("2. Precipitación (`pr`) — GPCP v2.3 (Global Precipitation Climatology Project, Adler et al., 2018): ")
+    r_r2.bold = True
+    r_r2.font.color.rgb = RGBColor(0x1B, 0x36, 0x5D)
+    p_ref2.add_run(
+        "Producto global mensual (2.5°) que combina radiometría satelital infrarroja y de microondas con más de 6,500 estaciones "
+        "pluviométricas de superficie. Es el estándar de oro de la OMM y del IPCC para evaluar la precipitación tropical continua "
+        "tanto sobre tierra firme como en los océanos adyacentes (Pacífico Este y Mar Caribe)."
+    )
+
     doc.add_paragraph(
-        "  • 0 = No considerado (peso nulo en el cálculo del score).\n"
-        "  • 1 = Importante (peso estándar de primer orden).\n"
-        "  • 2 = Muy importante (prioridad doble en la función de costo multivariada)."
+        "Contra estas referencias, GCMEval computa cuatro métricas estadísticas fundamentales para 5 períodos estacionales "
+        "(Media Anual [ANN], Invierno [DJF], Primavera [MAM], Verano [JJA] y Otoño [SON]):\n"
+        "  a) Sesgo Medio Climatológico (Bias): Mide la sobre/subestimación sistemática regional.\n"
+        "  b) Correlación Espacial de Pearson (r): Mide la fidelidad en la ubicación de los patrones espaciales y centros de acción.\n"
+        "  c) Ratio de Variabilidad Espacial (σ_GCM / σ_Ref): Evalúa si el modelo reproduce la amplitud real de los gradientes sin aplanarlos.\n"
+        "  d) Error Cuadrático Medio Centrado (CRMSE): Cuantifica la magnitud neta del error espacial libre de sesgo."
+    )
+
+    # 3. Interpretación de Pesos en GCMEval y Diseño de los 9 Experimentos
+    doc.add_heading("3. Justificación Científica y Diseño de los 9 Experimentos de Sensibilidad", level=1)
+    doc.add_paragraph(
+        "Para evitar que un modelo sea seleccionado por una 'compensación artificial de errores' (por ejemplo, simular una temperatura "
+        "excelente pero una precipitación completamente deficiente, o acertar en el promedio anual ocultando fallos severos en la época seca), "
+        "se diseñó una batería de 9 experimentos de sensibilidad (E0 a E8). Cada experimento modula los pesos relativos de variables y "
+        "estaciones climáticas según prioridades físicas y sectoriales:"
     )
 
     # Table of weights
@@ -226,6 +275,45 @@ def build_comprehensive_word_document(output_path):
             r.font.size = Pt(8.0)
 
     doc.add_paragraph()
+
+    doc.add_heading("3.1 Descripción Climatológica y Aplicación de Cada Experimento", level=2)
+    exp_descriptions = [
+        ("E0 — Control / Balance General (ERA5 50% + GPCP 50%)",
+         "Evaluación basal equilibrada. Mide el balance de energía y masa anual promedio en el istmo, sirviendo de referencia sin sesgos hacia ninguna estación o variable."),
+        
+        ("E1 — Énfasis en Temperatura (ERA5 67% + GPCP 33%)",
+         "Prioriza el balance radiativo de onda corta y larga y los gradientes térmicos superficie-mar (TSM Caribe vs Pacífico), motor térmico del gradiente de presión que modula el CLLJ."),
+        
+        ("E2 — Énfasis en Precipitación (ERA5 33% + GPCP 67%)",
+         "Prioriza la física convectiva tropical profunda y la interacción de la masa de aire húmedo con la topografía, esencial para cuencas hidrográficas y agricultura."),
+        
+        ("E3 — Época Seca y Estiaje (Énfasis en DJF + MAM)",
+         "Evalúa el comportamiento de los modelos durante el período de vientos alisios acelerados y frentes fríos ('Nortes'). Crítico para modelar la severidad de sequías, caudales mínimos en ríos y el Corredor Seco."),
+        
+        ("E4 — Época Lluviosa y Monzón (Énfasis en MAM + JJA + SON)",
+         "Evalúa la temporada de desarrollo de ondas tropicales, ciclones y la dinámica de la Canícula (MSD). Indispensable para la gestión de riesgos de inundación y recarga de acuíferos."),
+        
+        ("E5 — Temperatura en Época Seca (Temp doble en DJF + MAM)",
+         "Analiza el período de máxima insolación y menor nubosidad (marzo-abril-mayo), crucial para evaluar olas de calor, riesgo de incendios forestales y estrés hídrico por evapotranspiración máxima."),
+        
+        ("E6 — Precipitación en Época Lluviosa (Lluvia doble en MAM + JJA + SON)",
+         "Pone a prueba la capacidad de reproducir la estructura bimodal de la lluvia y la intensidad de eventos de precipitación extrema en los meses más activos (septiembre-octubre)."),
+        
+        ("E7 — Termodinámica Pura (100% ERA5, Peso Lluvia = 0)",
+         "Aislamiento térmico absoluto. Evalúa la dinámica atmosférica de gran escala y temperatura eliminando la alta incertidumbre espacial asociada a la parametrización de nubes convectivas."),
+        
+        ("E8 — Hidrología Pura (100% GPCP, Peso Temp = 0)",
+         "Aislamiento pluviométrico absoluto. Somete a los modelos al escrutinio estricto de la lluvia frente a observaciones satelitales, evaluando el ciclo hidrológico sin auxilio del campo térmico.")
+    ]
+
+    for e_tit, e_desc in exp_descriptions:
+        p_ed = doc.add_paragraph()
+        p_ed.paragraph_format.left_indent = Inches(0.2)
+        p_ed.paragraph_format.space_after = Pt(3)
+        r_et = p_ed.add_run(f"• {e_tit}: ")
+        r_et.bold = True
+        r_et.font.color.rgb = RGBColor(0x1B, 0x36, 0x5D)
+        p_ed.add_run(e_desc)
 
     # 4. Tabla de Resultados Detallados de los 36 Modelos en los 9 Experimentos
     doc.add_heading("4. Ranking y Puntajes de las 36 Realizaciones en los 9 Experimentos", level=1)
@@ -462,13 +550,17 @@ def build_comprehensive_word_document(output_path):
     doc.add_heading("9. Referencias Bibliográficas", level=1)
     
     refs = [
+        "Adler, R. F., Sapiano, M. R., Huffman, G. J., Wang, J. J., Gu, G., Bolvin, D., ... & Shin, D. B. (2018). The Global Precipitation Climatology Project (GPCP) monthly analysis (new version 2.3) and a review of 2017 global precipitation. Atmosphere, 9(4), 138.",
         "Almazroui, M., et al. (2021). Assessment of CMIP6 Performance and Projected Temperature and Precipitation Changes Over South America and Central America. Earth Systems and Environment, 5(2), 155-183.",
         "Amador, J. A. (1998). A climate feature of the tropical Americas: The trade wind easterly jet. Top. Meteor. Oceanogr, 5(2), 91-102.",
         "Amador, J. A. (2008). The Intra-Americas Sea low-level jet: overview and future research. Annals of the New York Academy of Sciences, 1146(1), 153-188.",
         "Brunner, L., Pendergrass, A. G., Lehner, F., Merrifield, A. L., Lorenz, R., & Knutti, R. (2020). Reduced global warming from CMIP6 projections when weighting models by performance and independence. Earth System Dynamics, 11(4), 995-1012.",
         "Cook, K. H., & Vizy, E. K. (2010). Hydrodynamics of the Caribbean low-level jet and its relationship to precipitation. Journal of Climate, 23(6), 1477-1494.",
+        "Durán-Quesada, A. M., Gimeno, L., Amador, J. A., & Nieto, R. (2010). Moisture sources for Central America: Identification of sources using a Lagrangian approach. Journal of Geophysical Research: Atmospheres, 115(D5).",
         "Enfield, D. B., & Alfaro, E. J. (1999). The dependence of Caribbean rainfall on the interaction of tropical Atlantic and Pacific SSTs. Journal of Climate, 12(7), 2093-2103.",
         "Giorgi, F., Coppola, E., Raffaele, F., Diro, G. T., Fuentes-Franco, R., et al. (2014). Changes in extremes and circulation features in CORDEX regional climate simulations over Central America. Journal of Geophysical Research: Atmospheres, 119(11), 6627-6647.",
+        "Gutiérrez, J. M., et al. (2021). IPCC AR6 WGI Chapter 10: Linking Global to Regional Climate Change. In Climate Change 2021: The Physical Science Basis. Cambridge University Press.",
+        "Hersbach, H., Bell, B., Berrisford, P., Hirahara, S., Horányi, A., Muñoz-Sabater, J., ... & Thépaut, J. N. (2020). The ERA5 global reanalysis. Quarterly Journal of the Royal Meteorological Society, 146(730), 1999-2049.",
         "Hidalgo, H. G., Alfaro, E. J., & Quesada-Montano, B. (2017). Observed and projected changes in Central American drought. Climate Research, 73(1-2), 127-140.",
         "Magaña, V., Amador, J. A., & Medina, S. (1999). The midsummer drought over Mexico and Central America. Journal of Climate, 12(6), 1577-1588.",
         "Maldonado, T., Rutgersson, A., Alfaro, E., Amador, J., & Saha, S. (2016). Interannual variability of the Midsummer Drought in Central America and the connection with sea surface temperatures. Atmósfera, 29(1), 35-59.",
