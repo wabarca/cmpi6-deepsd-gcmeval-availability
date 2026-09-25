@@ -162,7 +162,7 @@ def check_r_packages(rscript_exe, auto_install=False):
     backend_dir = repo_root / "gcmeval" / "back-end"
     
     check_code = (
-        'req_cran <- c("ggplot2", "plotly", "htmlwidgets", "DT", "fields", "plotrix", "sp"); '
+        'req_cran <- c("ncdf4", "raster", "RCurl", "sf", "sp", "zoo", "ggplot2", "plotly", "htmlwidgets", "DT", "fields", "plotrix"); '
         'installed <- rownames(installed.packages()); '
         'missing_cran <- req_cran[!req_cran %in% installed]; '
         'has_gcmeval <- "gcmeval" %in% installed; '
