@@ -523,9 +523,9 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
   cat(sprintf("[OK] Gráfico Interactivo HTML estilo GCMEval Shiny guardado: %s\n", spread_plot_html))
 }
 
-# 13. Mostrar resultados finales en pantalla
+# 13. Mostrar resultados finales de todas las familias evaluadas
 cat("\n" , paste(rep("=", 85), collapse=""), "\n")
-cat("            RANKING FINAL DE LAS 15 FAMILIAS DE MODELOS PARA CENTROAMÉRICA\n")
+cat("            RANKING GENERAL DE LAS 16 FAMILIAS EVALUADAS (CENTROAMÉRICA)\n")
 cat(paste(rep("=", 85), collapse=""), "\n")
 cat(sprintf("%-4s %-16s %-22s %-10s %-8s %-10s %-8s %-10s\n",
             "Rank", "Familia", "Mejor Variante", "Mean Rank", "SD Rank", "Top 10", "ΔT (°C)", "ΔP (%)"))
@@ -538,3 +538,39 @@ for (i in seq_len(nrow(stage3))) {
               sp_r$Delta_Tas_C[1], sp_r$Delta_Pr_pct[1]))
 }
 cat(paste(rep("=", 85), collapse=""), "\n\n")
+
+# 14. SELECCIÓN DEL ENSAMBLE FINAL DE 10 MODELOS (Deduplicación por Resolución y Desempeño)
+# Criterios de deduplicación institucional:
+# - NorESM2: NorESM2-MM (Rank 1, ~100 km) retenido frente a NorESM2-LM (Rank 11, ~250 km).
+# - EC-Earth3: EC-Earth3-Veg (Rank 2, ~100 km) retenido frente a EC-Earth3-Veg-LR (Rank 5, ~250 km).
+# - MPI-ESM1-2: MPI-ESM1-2-LR (Rank 4, mayor consistencia 8/9 Top 10) retenido frente a MPI-ESM1-2-HR (Rank 6).
+# - INM: INM-CM4-8 (Rank 10) retenido frente a INM-CM5-0 (Rank 13).
+# Descarte por menor desempeño / sesgos extremos en Centroamérica: FGOALS-g3 (Rank 15) y CanESM5 (Rank 16).
+
+discarded_redundant <- c("EC-Earth3-Veg-LR", "MPI-ESM1-2-HR", "NorESM2-LM", "INM-CM5-0", "FGOALS-g3", "CanESM5")
+final_ensemble_df <- stage3[!stage3$Familia %in% discarded_redundant, ]
+final_ensemble_df$Rank_Ensamble <- seq_len(nrow(final_ensemble_df))
+
+# Guardar lista final en selected_models.csv (en raíz y en results/)
+root_selected_csv <- file.path(workspace_dir, "selected_models.csv")
+results_selected_csv <- file.path(results_dir, "selected_models.csv")
+results_selected_full_csv <- file.path(results_dir, "final_selected_ensemble_10models.csv")
+
+writeLines(final_ensemble_df$Mejor_Variante, root_selected_csv)
+writeLines(final_ensemble_df$Mejor_Variante, results_selected_csv)
+write.csv(final_ensemble_df, results_selected_full_csv, row.names = FALSE)
+
+cat(paste(rep("=", 85), collapse=""), "\n")
+cat("      ENSAMBLE FINAL SELECCIONADO PARA EL MANIFIESTO Y DESCARGA (10 MODELOS)\n")
+cat(paste(rep("=", 85), collapse=""), "\n")
+cat(sprintf("%-4s %-16s %-24s %-10s %-8s %-10s\n",
+            "N°", "Familia", "Realización (source.var)", "Mean Rank", "SD Rank", "Top 10 Freq"))
+cat(paste(rep("-", 85), collapse=""), "\n")
+for (i in seq_len(nrow(final_ensemble_df))) {
+  r <- final_ensemble_df[i, ]
+  cat(sprintf("%-4d %-16s %-24s %-10.2f %-8.2f %-10s\n",
+              r$Rank_Ensamble, r$Familia, r$Mejor_Variante, r$Mean_Rank, r$SD_Rank, r$Freq_Top10))
+}
+cat(paste(rep("=", 85), collapse=""), "\n")
+cat(sprintf("[OK] Lista final de %d modelos guardada en: %s\n", nrow(final_ensemble_df), root_selected_csv))
+cat(sprintf("[OK] Manifiesto listo para generarse ejecutando: python generate_manifest.py\n\n"))
