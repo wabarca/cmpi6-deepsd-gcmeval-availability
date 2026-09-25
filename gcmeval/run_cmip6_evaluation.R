@@ -106,6 +106,16 @@ experiments_def <- list(
 
 w_metric <- c(1, 1, 1, 1) # bias=1, sd=1, corr=1, rmse=1
 
+# Mapeo inverso exacto y robusto hacia los nombres de modelos en ESGF
+map_df <- data.frame(
+  raw_esgf = names(mapped_models),
+  mapped_id = as.character(unname(unlist(mapped_models))),
+  clean_key = sub("^[a-z0-9]+\\.", "", as.character(unname(unlist(mapped_models)))),
+  stringsAsFactors = FALSE
+)
+clean_common <- sub("^[a-z0-9]+\\.", "", common_models)
+esgf_model_names <- map_df$raw_esgf[match(clean_common, map_df$clean_key)]
+
 # Extracción precisa de etiquetas de modelo
 labels_info <- gcmlabel(common_models)
 clean_model_names <- paste0(gsub("_", "-", labels_info$gcm), ".", labels_info$rip)
@@ -183,6 +193,7 @@ cat(sprintf("\n[OK] Tabla consolidada de experimentos guardada: %s\n", summary_c
 # 8. ETAPA 1: Análisis estadístico de las 36 variantes
 stage1 <- data.frame(
   Modelo = clean_model_names,
+  Modelo_ESGF = esgf_model_names,
   Familia = clean_families,
   Variante = clean_variants,
   ID_Interno = common_models,
@@ -221,13 +232,14 @@ rownames(stage2) <- NULL
 
 stage2_csv <- file.path(results_dir, "analysis_stage2_best_variants.csv")
 write.csv(stage2, stage2_csv, row.names = FALSE)
-cat(sprintf("[OK] Etapa 2 (Mejor variante por familia, 15 familias) guardada: %s\n", stage2_csv))
+cat(sprintf("[OK] Etapa 2 (Mejor variante por familia, 16 familias) guardada: %s\n", stage2_csv))
 
 # 10. ETAPA 3: Ranking de Familias
 stage3 <- data.frame(
   Rank_Familia = seq_len(nrow(stage2)),
   Familia = stage2$Familia,
   Mejor_Variante = stage2$Modelo,
+  Modelo_ESGF = stage2$Modelo_ESGF,
   ID_Interno = stage2$ID_Interno,
   Mean_Rank = stage2$Mean_Rank,
   SD_Rank = stage2$SD_Rank,
@@ -238,7 +250,7 @@ stage3 <- data.frame(
 
 stage3_csv <- file.path(results_dir, "analysis_stage3_families.csv")
 write.csv(stage3, stage3_csv, row.names = FALSE)
-cat(sprintf("[OK] Etapa 3 (Ranking consolidado de 15 familias) guardado: %s\n", stage3_csv))
+cat(sprintf("[OK] Etapa 3 (Ranking consolidado de 16 familias) guardado: %s\n", stage3_csv))
 
 # 11. CÁLCULO DE LA SEÑAL DE CAMBIO CLIMÁTICO Y SPREAD FUTURO (SSP5-8.5, 2071-2100 vs 1981-2010)
 cat("\n--- CALCULANDO SEÑAL DE CAMBIO CLIMÁTICO Y SPREAD FUTURO (CAM:6) ---\n")
@@ -556,8 +568,8 @@ root_selected_csv <- file.path(workspace_dir, "selected_models.csv")
 results_selected_csv <- file.path(results_dir, "selected_models.csv")
 results_selected_full_csv <- file.path(results_dir, "final_selected_ensemble_10models.csv")
 
-writeLines(final_ensemble_df$Mejor_Variante, root_selected_csv)
-writeLines(final_ensemble_df$Mejor_Variante, results_selected_csv)
+writeLines(final_ensemble_df$Modelo_ESGF, root_selected_csv)
+writeLines(final_ensemble_df$Modelo_ESGF, results_selected_csv)
 write.csv(final_ensemble_df, results_selected_full_csv, row.names = FALSE)
 
 cat(paste(rep("=", 85), collapse=""), "\n")
@@ -569,7 +581,7 @@ cat(paste(rep("-", 85), collapse=""), "\n")
 for (i in seq_len(nrow(final_ensemble_df))) {
   r <- final_ensemble_df[i, ]
   cat(sprintf("%-4d %-16s %-24s %-10.2f %-8.2f %-10s\n",
-              r$Rank_Ensamble, r$Familia, r$Mejor_Variante, r$Mean_Rank, r$SD_Rank, r$Freq_Top10))
+              r$Rank_Ensamble, r$Familia, r$Modelo_ESGF, r$Mean_Rank, r$SD_Rank, r$Freq_Top10))
 }
 cat(paste(rep("=", 85), collapse=""), "\n")
 cat(sprintf("[OK] Lista final de %d modelos guardada en: %s\n", nrow(final_ensemble_df), root_selected_csv))
