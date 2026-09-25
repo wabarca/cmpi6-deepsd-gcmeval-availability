@@ -21,7 +21,16 @@ shinyjs.resetClick = function() {
   Shiny.onInputChange('.clientValue-plotly_click-A', 'null'); 
 }"
 
-file.shape <- "../back-end/inst/extdata/SREX_regions/referenceRegions.shp"
+file.shape.candidates <- c(
+  system.file("extdata", "SREX_regions", "referenceRegions.shp", package = "gcmeval"),
+  file.path(getwd(), "gcmeval", "back-end", "inst", "extdata", "SREX_regions", "referenceRegions.shp"),
+  file.path(getwd(), "back-end", "inst", "extdata", "SREX_regions", "referenceRegions.shp"),
+  "../back-end/inst/extdata/SREX_regions/referenceRegions.shp"
+)
+file.shape <- file.shape.candidates[file.exists(file.shape.candidates) & file.shape.candidates != ""][1]
+if (is.na(file.shape) || !file.exists(file.shape)) {
+  file.shape <- "../back-end/inst/extdata/SREX_regions/referenceRegions.shp"
+}
 
 regionlist <- c(
   "Global",
@@ -207,7 +216,16 @@ regions <- function(type=c("srex","prudence"),region=NULL) {
     y <- NULL
   }
   if(is.null(type) | "prudence" %in% tolower(type)) {
-    f <- "../back-end/inst/extdata/PRUDENCE_regions/RegionSpecifications.csv"
+    f.candidates <- c(
+      system.file("extdata", "PRUDENCE_regions", "RegionSpecifications.csv", package = "gcmeval"),
+      file.path(getwd(), "gcmeval", "back-end", "inst", "extdata", "PRUDENCE_regions", "RegionSpecifications.csv"),
+      file.path(getwd(), "back-end", "inst", "extdata", "PRUDENCE_regions", "RegionSpecifications.csv"),
+      "../back-end/inst/extdata/PRUDENCE_regions/RegionSpecifications.csv"
+    )
+    f <- f.candidates[file.exists(f.candidates) & f.candidates != ""][1]
+    if (is.na(f) || !file.exists(f)) {
+      f <- "../back-end/inst/extdata/PRUDENCE_regions/RegionSpecifications.csv"
+    }
     x <- read.table(f,sep=",")
     ivec <- 2:nrow(x)
     names <- as.character(x[2:nrow(x),1])
