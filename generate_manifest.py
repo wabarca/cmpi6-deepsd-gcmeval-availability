@@ -162,6 +162,16 @@ def main():
         help="Nombre de la lista plana de URLs (por defecto: cmip6_urls.txt)"
     )
     parser.add_argument(
+        "--cache-file",
+        default="esgf_raw_files.json",
+        help="Ruta al archivo JSON de caché de metadatos de archivos (por defecto: esgf_raw_files.json)"
+    )
+    parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="Forzar consulta en línea a ESGF ignorando la caché local de archivos"
+    )
+    parser.add_argument(
         "-w", "--workers",
         type=int,
         default=6,
@@ -210,6 +220,7 @@ def main():
     print(f"Manifiesto TSV de salida      : {args.output_tsv}")
     print(f"Catálogo CSV de archivos      : {args.output_csv}")
     print(f"Lista de URLs                 : {args.output_urls}")
+    print(f"Caché de archivos NetCDF      : {args.cache_file} (force_refresh={args.force_refresh})")
     print(f"Concurrencia (workers)        : {args.workers}")
     print("Períodos de interés:")
     for exp_k, r_v in period_ranges.items():
@@ -228,7 +239,9 @@ def main():
     files_df, unresolved = build_files_inventory(
         selected_df=selected_df,
         max_workers=args.workers,
-        period_ranges=period_ranges
+        period_ranges=period_ranges,
+        cache_file=args.cache_file,
+        force_refresh=args.force_refresh
     )
 
     # 3. Validar inventario

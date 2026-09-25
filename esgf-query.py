@@ -600,70 +600,154 @@ def fetch_files_for_combination(source_id, variant_label, experiment_id, variabl
 
 
 def build_files_inventory(selected_df, experiments=DEFAULT_EXPERIMENTS, variables=DEFAULT_VARIABLES,
-                          max_workers=MAX_WORKERS, session=None, period_ranges=DEFAULT_PERIOD_RANGES):
-    """Consulta detallada de archivos NetCDF para las realizaciones seleccionadas."""
+                          max_workers=MAX_WORKERS, session=None, period_ranges=DEFAULT_PERIOD_RANGES,
+                          cache_file=CACHE_FILE_FILES, force_refresh=False):
+    """
+    Consulta detallada de archivos NetCDF para las realizaciones seleccionadas,
+    con soporte de almacenamiento y lectura de caché local JSON.
+    """
     print()
     print("=" * 70)
     print("FASE 2: CONSULTA DETALLADA DE ARCHIVOS NETCDF (FILTRADO POR PERÍODO)")
-    print(f"Realizaciones seleccionadas a procesar: {len(selected_df)}")
-    print(f"Total combinaciones dataset teóricas: {len(selected_df) * len(experiments) * len(variables):,}")
+    print(f"Realizaciones seleccionadas a procesar : {len(selected_df)}")
+    print(f"Total combinaciones dataset teóricas  : {len(selected_df) * len(experiments) * len(variables):,}")
+    print(f"Archivo de caché de metadatos         : {cache_file or 'Desactivada'}")
     print("=" * 70)
 
-    http_session = session or get_http_session()
+    # 1. Cargar caché existente si está disponible
+    cached_records = []
+    cached_combos = set()
+    if cache_file and os.path.exists(cache_file) and not force_refresh:
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                cached_records = json.load(f)
+            for r in cached_records:
+                cached_combos.add((r.get("source_id"), r.get("variant_label"), r.get("experiment_id"), r.get("variable_id")))
+            print(f"[OK] Caché local cargada: {len(cached_records):,} archivos ({len(cached_combos):,} combinaciones dataset)")
+        except Exception as e:
+            print(f"[AVISO] No se pudo leer la caché '{cache_file}': {e}")
+            cached_records = []
+            cached_combos = set()
 
-    tasks = []
+    # 2. Identificar tareas pendientes
+    all_tasks = []
+    missing_tasks = []
     for _, row in selected_df.iterrows():
         s_id = row["source_id"]
         v_lbl = row["variant_label"]
         for exp in experiments:
             for var in variables:
-                tasks.append((s_id, v_lbl, exp, var))
+                key = (s_id, v_lbl, exp, var)
+                all_tasks.append(key)
+                if force_refresh or (key not in cached_combos):
+                    missing_tasks.append(key)
 
-    total_tasks = len(tasks)
     all_files_records = []
     unresolved_combinations = []
-    completed_tasks = 0
-    t0 = time.time()
 
-    def worker_func(task_args):
-        src, var_lbl, exp, var = task_args
-        files, success = fetch_files_for_combination(
-            src, var_lbl, exp, var, session=http_session, period_ranges=period_ranges
-        )
-        return task_args, files, success
+    # Si hay registros en caché que aplican a las tareas solicitadas
+    if cached_records and not force_refresh:
+        target_keys = set(all_tasks)
+        for r in cached_records:
+            key = (r.get("source_id"), r.get("variant_label"), r.get("experiment_id"), r.get("variable_id"))
+            if key in target_keys:
+                all_files_records.append(r)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(worker_func, t): t for t in tasks}
+    # Si faltan combinaciones por consultar en la red
+    if missing_tasks:
+        print(f"[INFO] Consultando {len(missing_tasks):,} combinaciones en MetaGrid...")
+        http_session = session or get_http_session()
+        total_tasks = len(missing_tasks)
+        completed_tasks = 0
+        t0 = time.time()
+        new_records = []
 
-        for future in as_completed(futures):
-            task_args, files, success = future.result()
-            completed_tasks += 1
-
+        def worker_func(task_args):
             src, var_lbl, exp, var = task_args
+            files, success = fetch_files_for_combination(
+                src, var_lbl, exp, var, session=http_session, period_ranges=None
+            )
+            return task_args, files, success
 
-            if not success or (not files):
-                unresolved_combinations.append({
-                    "source_id": src,
-                    "variant_label": var_lbl,
-                    "experiment_id": exp,
-                    "variable_id": var,
-                    "reason": "Error en consulta" if not success else "Sin archivos en el período de interés",
-                })
-            else:
-                all_files_records.extend(files)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(worker_func, t): t for t in missing_tasks}
 
-            if completed_tasks % 25 == 0 or completed_tasks == total_tasks:
-                elapsed = time.time() - t0
-                pct = (completed_tasks / total_tasks) * 100.0
-                rate = completed_tasks / elapsed if elapsed > 0 else 0
-                print(
-                    f"Progreso archivos: {completed_tasks:4d}/{total_tasks:4d} ({pct:5.1f}%) "
-                    f"| Archivos acumulados: {len(all_files_records):6d} "
-                    f"| Tasa: {rate:.1f} req/s"
-                )
+            for future in as_completed(futures):
+                task_args, files, success = future.result()
+                completed_tasks += 1
 
-    if all_files_records:
-        files_df = pd.DataFrame(all_files_records)
+                src, var_lbl, exp, var = task_args
+
+                if not success or (not files):
+                    unresolved_combinations.append({
+                        "source_id": src,
+                        "variant_label": var_lbl,
+                        "experiment_id": exp,
+                        "variable_id": var,
+                        "reason": "Error en consulta" if not success else "Sin archivos en el catálogo ESGF",
+                    })
+                else:
+                    new_records.extend(files)
+
+                if completed_tasks % 25 == 0 or completed_tasks == total_tasks:
+                    elapsed = time.time() - t0
+                    pct = (completed_tasks / total_tasks) * 100.0
+                    rate = completed_tasks / elapsed if elapsed > 0 else 0
+                    print(
+                        f"Progreso archivos: {completed_tasks:4d}/{total_tasks:4d} ({pct:5.1f}%) "
+                        f"| Archivos nuevos: {len(new_records):6d} "
+                        f"| Tasa: {rate:.1f} req/s"
+                    )
+
+        # Unir nuevos con existentes
+        all_files_records.extend(new_records)
+
+        # Actualizar archivo de caché JSON con todos los registros conocidos
+        if cache_file:
+            seen_files = set()
+            merged_cache = []
+            for r in (cached_records + new_records if not force_refresh else new_records):
+                fid = r.get("file_name") or r.get("https_url")
+                if fid and fid not in seen_files:
+                    seen_files.add(fid)
+                    merged_cache.append(r)
+            try:
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump(merged_cache, f, indent=2)
+                size_mb = os.path.getsize(cache_file) / (1024.0 * 1024.0)
+                print(f"[OK] Caché de archivos actualizada: '{cache_file}' ({len(merged_cache):,} archivos, {size_mb:.1f} MB)")
+            except Exception as e:
+                print(f"[ERROR] No se pudo guardar la caché de archivos en '{cache_file}': {e}")
+    else:
+        print(f"[INFO] Todas las combinaciones solicitadas fueron cargadas desde la caché local '{cache_file}' sin consultas de red.")
+
+    # 3. Aplicar filtrado por período de interés sobre los registros
+    ranges = period_ranges if period_ranges is not None else DEFAULT_PERIOD_RANGES
+    filtered_records = []
+    seen_fnames = set()
+    for f in all_files_records:
+        fname = f.get("file_name")
+        if fname in seen_fnames:
+            continue
+        seen_fnames.add(fname)
+
+        s_yr, e_yr = f.get("start_year"), f.get("end_year")
+        if s_yr is None or e_yr is None:
+            s_yr, e_yr = extract_file_years(fname)
+            f["start_year"] = s_yr
+            f["end_year"] = e_yr
+
+        exp = f.get("experiment_id")
+        req_range = ranges.get(exp)
+        if req_range and s_yr is not None and e_yr is not None:
+            req_start, req_end = req_range
+            if s_yr <= req_end and e_yr >= req_start:
+                filtered_records.append(f)
+        else:
+            filtered_records.append(f)
+
+    if filtered_records:
+        files_df = pd.DataFrame(filtered_records)
 
         if "file_size_bytes" in files_df.columns:
             files_df["file_size_mb"] = (
