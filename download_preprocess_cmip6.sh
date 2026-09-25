@@ -434,7 +434,7 @@ main() {
 
         tail -n +2 "$MANIFEST" | tr -d '\r' | awk -F'\t' -v m="$model" -v v="$variant" -v e="$exp" -v va="$var" '
             $1 == m && $2 == v && $3 == e && $4 == va {
-                print $5"\t"$6"\t"$7"\t"$8"\t"$9
+                print $7"\t"$8"\t"$9"\t"$10"\t"$11
             }
         ' | while IFS=$'\t' read -r fname url chk chk_type sz; do
             fname=$(echo "$fname" | tr -d '\r')
