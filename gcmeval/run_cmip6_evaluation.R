@@ -270,6 +270,8 @@ for (i in seq_along(common_models)) {
 
   m_match <- which(stage1$ID_Interno == m_id)
   m_mean_rank <- if (length(m_match) > 0) stage1$Mean_Rank[m_match[1]] else NA
+  m_sd_rank   <- if (length(m_match) > 0) stage1$SD_Rank[m_match[1]] else NA
+  m_top10     <- if (length(m_match) > 0) stage1$Freq_Top10[m_match[1]] else 0
   var_str <- as.character(clean_variants[i])
   if (length(var_str) == 0) var_str <- ""
 
@@ -279,6 +281,8 @@ for (i in seq_along(common_models)) {
     Variante = as.character(var_str),
     ID_Interno = as.character(m_id),
     Mean_Rank = as.numeric(m_mean_rank),
+    SD_Rank = as.numeric(m_sd_rank),
+    Freq_Top10 = sprintf("%d / 9", as.integer(m_top10)),
     Rank_Familia = as.integer(fam_rank),
     Es_Mejor_Familia = as.logical(is_best_family),
     Delta_Tas_C = round(as.numeric(delta_tas), 3),
@@ -307,7 +311,30 @@ gcmeval_ramp <- colorRampPalette(c("#4dac26", "#98c166", "#d7d7d7", "#d196ba", "
 max_rank <- max(spread_df$Mean_Rank, na.rm = TRUE)
 spread_df$Color_Hex <- gcmeval_ramp(100)[pmin(100, pmax(1, round((spread_df$Mean_Rank / max_rank) * 100)))]
 
-spread_df$HoverText <- sprintf("<b>%s</b>", spread_df$Modelo)
+# Preparar contenido para ventana emergente interactiva al hacer clic en cada punto
+spread_df$ModalContent <- sprintf(
+  "<div style='border-bottom: 2px solid #2b6616; padding-bottom: 8px; margin-bottom: 12px;'>
+     <h3 style='margin:0; color:#1b4332;'>%s</h3>
+     <span style='display:inline-block; margin-top:4px; padding:2px 8px; font-size:12px; font-weight:bold; border-radius:4px; background:%s; color:%s;'>%s</span>
+   </div>
+   <table style='width:100%%; font-size:13px; border-collapse:collapse; line-height:1.6;'>
+     <tr><td style='color:#555; font-weight:bold;'>Familia:</td><td>%s</td></tr>
+     <tr><td style='color:#555; font-weight:bold;'>Variante / Miembro:</td><td>%s</td></tr>
+     <tr><td style='color:#555; font-weight:bold;'>Ranking Medio (E0-E8):</td><td><b>%.2f</b> (Desv. Est.: %.2f)</td></tr>
+     <tr><td style='color:#555; font-weight:bold;'>Frecuencia en Top 10:</td><td>%s de 9 experimentos</td></tr>
+     <tr style='border-top:1px solid #eee;'><td style='color:#555; font-weight:bold; padding-top:6px;'>ΔT (SSP5-8.5 2071-2100):</td><td style='padding-top:6px; color:#b7094c; font-weight:bold;'>+%.2f °C</td></tr>
+     <tr><td style='color:#555; font-weight:bold;'>ΔP (SSP5-8.5 2071-2100):</td><td style='color:#0077b6; font-weight:bold;'>%.2f mm/día (%.1f%%)</td></tr>
+   </table>",
+  spread_df$Modelo,
+  ifelse(spread_df$Es_Mejor_Familia, "#d8f3dc", "#edf2f4"),
+  ifelse(spread_df$Es_Mejor_Familia, "#2d6a4f", "#495057"),
+  ifelse(spread_df$Es_Mejor_Familia, sprintf("Mejor Representante de Familia (#%d)", spread_df$Rank_Familia), "Variante Adicional"),
+  spread_df$Familia,
+  spread_df$Variante,
+  spread_df$Mean_Rank, spread_df$SD_Rank,
+  spread_df$Freq_Top10,
+  spread_df$Delta_Tas_C, spread_df$Delta_Pr_mm_day, spread_df$Delta_Pr_pct
+)
 
 best_df  <- spread_df[spread_df$Es_Mejor_Familia, ]
 other_df <- spread_df[!spread_df$Es_Mejor_Familia, ]
@@ -349,7 +376,7 @@ cat(sprintf("[OK] Gráfico de Spread Futuro (PNG) guardado: %s\n", spread_plot_p
 if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets", quietly = TRUE)) {
   library(plotly)
   
-  # Scatter principal con etiquetas limpias (solo nombres)
+  # Scatter principal con etiquetas limpias y customdata para ventana emergente
   p_scatter <- plot_ly() %>%
     add_trace(
       data = other_df,
@@ -362,6 +389,7 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
         line = list(color = "grey40", width = 0.8)
       ),
       text = ~Modelo,
+      customdata = ~ModalContent,
       hoverinfo = "text",
       name = "Otras Variantes"
     ) %>%
@@ -373,6 +401,7 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
       textposition = "top center",
       textfont = list(family = "Arial", size = 11, color = "#111111"),
       hovertext = ~Modelo,
+      customdata = ~ModalContent,
       hoverinfo = "text",
       marker = list(
         color = ~Color_Hex,
@@ -385,7 +414,7 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
     layout(
       xaxis = list(title = "Temperature change (°C)", zerolinecolor = "#bdbdbd", zerolinewidth = 1),
       yaxis = list(title = "Precipitation change (%)", zerolinecolor = "#bdbdbd", zerolinewidth = 1),
-      title = list(text = "<b>Climate Change Spread in Central America/Mexico (CAM:6)</b><br><sup>SSP5-8.5 (2071-2100 vs 1981-2010) - GCMEval Evaluation Engine</sup>"),
+      title = list(text = "<b>Climate Change Spread in Central America/Mexico (CAM:6)</b><br><sup>SSP5-8.5 (2071-2100 vs 1981-2010) - Haz clic en un modelo para ver sus estadísticas detalladas</sup>"),
       legend = list(orientation = "h", xanchor = "center", x = 0.5, y = -0.15)
     )
   
@@ -402,7 +431,76 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
     shareX = TRUE, shareY = TRUE, titleX = TRUE, titleY = TRUE
   )
   
-  htmlwidgets::saveWidget(p_composite, file = spread_plot_html, selfcontained = TRUE)
+  # Inyectar manejador de evento de clic para desplegar ventana modal emergente
+  p_interactive <- htmlwidgets::onRender(
+    p_composite,
+    "function(el, x) {
+      var modalId = 'plotly-model-modal';
+      var backdropId = 'plotly-modal-backdrop';
+      var modal = document.getElementById(modalId);
+      var backdrop = document.getElementById(backdropId);
+      
+      if (!modal) {
+        backdrop = document.createElement('div');
+        backdrop.id = backdropId;
+        backdrop.style.position = 'fixed';
+        backdrop.style.top = '0';
+        backdrop.style.left = '0';
+        backdrop.style.width = '100vw';
+        backdrop.style.height = '100vh';
+        backdrop.style.backgroundColor = 'rgba(0,0,0,0.45)';
+        backdrop.style.zIndex = '99998';
+        backdrop.style.display = 'none';
+        backdrop.style.backdropFilter = 'blur(2px)';
+        backdrop.onclick = function() {
+          modal.style.display = 'none';
+          backdrop.style.display = 'none';
+        };
+        
+        modal = document.createElement('div');
+        modal.id = modalId;
+        modal.style.position = 'fixed';
+        modal.style.top = '50%';
+        modal.style.left = '50%';
+        modal.style.transform = 'translate(-50%, -50%)';
+        modal.style.backgroundColor = '#ffffff';
+        modal.style.padding = '22px 26px';
+        modal.style.borderRadius = '12px';
+        modal.style.boxShadow = '0 12px 36px rgba(0,0,0,0.3)';
+        modal.style.zIndex = '99999';
+        modal.style.display = 'none';
+        modal.style.maxWidth = '460px';
+        modal.style.width = '90%';
+        modal.style.fontFamily = 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif';
+        modal.style.border = '1px solid #e2e8f0';
+        
+        document.body.appendChild(backdrop);
+        document.body.appendChild(modal);
+      }
+      
+      el.on('plotly_click', function(data) {
+        if (data.points && data.points.length > 0) {
+          var pt = data.points[0];
+          var content = pt.customdata;
+          if (content) {
+            modal.innerHTML = content + 
+              '<div style=\"margin-top:18px; text-align:right;\">' +
+              '<button id=\"close-modal-btn\" style=\"background:#1b4332; color:white; border:none; padding:8px 20px; font-size:13px; font-weight:bold; border-radius:6px; cursor:pointer;\">Cerrar</button>' +
+              '</div>';
+            modal.style.display = 'block';
+            backdrop.style.display = 'block';
+            
+            document.getElementById('close-modal-btn').onclick = function() {
+              modal.style.display = 'none';
+              backdrop.style.display = 'none';
+            };
+          }
+        }
+      });
+    }"
+  )
+  
+  htmlwidgets::saveWidget(p_interactive, file = spread_plot_html, selfcontained = TRUE)
   cat(sprintf("[OK] Gráfico Interactivo HTML estilo GCMEval Shiny guardado: %s\n", spread_plot_html))
 }
 
