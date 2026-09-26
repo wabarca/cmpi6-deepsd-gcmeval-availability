@@ -155,11 +155,12 @@ def print_config_summary(config):
     w_corr = float(metrics.get("correlation", 1.0))
     w_rmse = float(metrics.get("rmse", 1.0))
 
-    n_exp = len(config.get("experiments", {}))
+    exps = config.get("experiments", {})
+    n_exp = len(exps)
 
-    print("=" * 75)
+    print("=" * 78)
     print(" CONFIGURACIÓN ACTIVA DE EVALUACIÓN CLIMATOLÓGICA (GCMEVAL)")
-    print("=" * 75)
+    print("=" * 78)
     print(f" [1] Escenario / Forzamiento : {scen} (Período base historical 1981-2014)")
     print(f" [2] Observaciones de Ref.   : Temp: {obs_t} | Prec: {obs_p}")
     print(f" [3] Región Primaria         : {p_name} ({p_pct:.1f}% del peso)")
@@ -168,8 +169,13 @@ def print_config_summary(config):
     else:
         print(f" [4] Región Secundaria       : Desactivada (Solo región primaria)")
     print(f" [5] Ponderación de Métricas : Bias={w_bias:.1f} | Desv.Est={w_sd:.1f} | Corr={w_corr:.1f} | RMSE={w_rmse:.1f}")
-    print(f" [6] Matriz de Sensibilidad  : {n_exp} Experimentos configurados (E0 a E{n_exp - 1})")
-    print("=" * 75)
+    print(f" [6] Experimentos Activos    : {n_exp} Experimentos configurados:")
+    for e_id, e_val in exps.items():
+        wt = e_val.get("wt", 1.0)
+        wp = e_val.get("wp", 1.0)
+        desc = e_val.get("desc", e_val.get("name", e_id))
+        print(f"       • {e_id:2s} (wt={wt:.1f}, wp={wp:.1f}) : {desc}")
+    print("=" * 78)
 
 
 def interactive_config_wizard(config, config_path):
@@ -178,7 +184,7 @@ def interactive_config_wizard(config, config_path):
     print("(Presiona ENTER en cualquier opción para mantener el valor actual)\n")
 
     # 1. Región Primaria
-    print("Seleccione la Región Primaria:")
+    print("1. SELECCIÓN DE REGIÓN PRIMARIA:")
     for idx, reg in enumerate(AVAILABLE_REGIONS, 1):
         curr_mark = " (Actual)" if reg == config["regions"]["primary"]["name"] else ""
         print(f"  [{idx}] {reg}{curr_mark}")
@@ -189,7 +195,7 @@ def interactive_config_wizard(config, config_path):
     # 2. Región Secundaria
     curr_s_en = config["regions"]["secondary"].get("enabled", False)
     s_prompt = "s" if curr_s_en else "n"
-    ans_s = input(f"\n¿Desea activar un Dominio Secundario? (s/n) [{s_prompt}]: ").strip().lower()
+    ans_s = input(f"\n2. ¿DESEA ACTIVAR UN DOMINIO SECUNDARIO? (s/n) [{s_prompt}]: ").strip().lower()
     if ans_s in ("s", "si", "y", "yes"):
         config["regions"]["secondary"]["enabled"] = True
         print("\nSeleccione la Región Secundaria:")
@@ -211,17 +217,56 @@ def interactive_config_wizard(config, config_path):
         config["regions"]["secondary"]["enabled"] = False
 
     # 3. Observaciones
-    print(f"\nConjunto observacional para Temperatura {AVAILABLE_OBS_TEMP}:")
+    print(f"\n3. CONJUNTOS OBSERVACIONALES DE REFERENCIA:")
     curr_obs_t = config["observations"].get("temperature", "ERA5")
-    ans_obs_t = input(f"Observación Temp [{curr_obs_t}]: ").strip().upper()
+    ans_obs_t = input(f"Observación Temp {AVAILABLE_OBS_TEMP} [{curr_obs_t}]: ").strip().upper()
     if ans_obs_t in AVAILABLE_OBS_TEMP:
         config["observations"]["temperature"] = ans_obs_t
 
-    print(f"\nConjunto observacional para Precipitación {AVAILABLE_OBS_PREC}:")
     curr_obs_p = config["observations"].get("precipitation", "GPCP")
-    ans_obs_p = input(f"Observación Prec [{curr_obs_p}]: ").strip().upper()
+    ans_obs_p = input(f"Observación Prec {AVAILABLE_OBS_PREC} [{curr_obs_p}]: ").strip().upper()
     if ans_obs_p in AVAILABLE_OBS_PREC:
         config["observations"]["precipitation"] = ans_obs_p
+
+    # 4. Ponderación de Métricas Climatológicas
+    print(f"\n4. PONDERACIÓN DE MÉTRICAS CLIMATOLÓGICAS (Bias, SD, Corr, RMSE):")
+    for m_key, m_label in [("bias", "Sesgo medio (Bias)"), ("std_dev", "Variabilidad interanual (SD)"), ("correlation", "Patrón espacial (Corr)"), ("rmse", "Error cuadrático (RMSE)")]:
+        curr_m_val = config["metrics_weights"].get(m_key, 1.0)
+        ans_m = input(f"  Peso para {m_label} [{curr_m_val}]: ").strip()
+        if ans_m:
+            try:
+                config["metrics_weights"][m_key] = float(ans_m)
+            except ValueError:
+                pass
+
+    # 5. Ponderación de Variables y Experimentos
+    print(f"\n5. PONDERACIÓN DE VARIABLES (Temp wt vs Prec wp) Y EXPERIMENTOS:")
+    print("  [1] Mantener la matriz completa de 9 experimentos estándar (E0 a E8)")
+    print("  [2] Restaurar experimentos estándar por defecto")
+    print("  [3] Definir un único experimento personalizado con pesos a medida")
+    ans_exp_mode = input("Opción [1-3, defecto: 1]: ").strip()
+    
+    if ans_exp_mode == "2":
+        config["experiments"] = get_default_config()["experiments"]
+        print("  -> Restaurada matriz completa de 9 experimentos.")
+    elif ans_exp_mode == "3":
+        ans_wt = input("  Peso para Temperatura (wt, ej. 1.0 o 2.0) [1.0]: ").strip() or "1.0"
+        ans_wp = input("  Peso para Precipitación (wp, ej. 1.0 o 2.0) [1.0]: ").strip() or "1.0"
+        try:
+            wt_val = float(ans_wt)
+            wp_val = float(ans_wp)
+            config["experiments"] = {
+                "E0": {
+                    "name": "E0_Personalizado",
+                    "wt": wt_val,
+                    "wp": wp_val,
+                    "seasons": [1, 1, 1, 1, 1],
+                    "desc": f"Experimento Personalizado (wt={wt_val}, wp={wp_val})"
+                }
+            }
+            print(f"  -> Configurado experimento único personalizado: Temp wt={wt_val}, Prec wp={wp_val}")
+        except ValueError:
+            pass
 
     # Guardar en YAML
     save_config(config, config_path)

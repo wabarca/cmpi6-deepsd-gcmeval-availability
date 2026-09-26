@@ -38,8 +38,8 @@ if (!file.exists(models_csv)) {
 # 2. Cargar funciones base de GCMEval
 source(file.path(gcmeval_dir, "front-end", "global.R"))
 
-# Helper para valores por defecto
-`%||%` <- function(a, b) if (!is.null(a) && !is.na(a)) a else b
+# Helper para valores por defecto (seguro para escalares y vectores)
+`%||%` <- function(a, b) if (!is.null(a) && length(a) > 0) a else b
 
 # 3. Leer lista de modelos seleccionados de ESGF MetaGrid
 target_models_raw <- readLines(models_csv)
@@ -172,8 +172,8 @@ common_models <- intersect(rownames(tas_ranks), rownames(pr_ranks))
 tas_ranks <- tas_ranks[common_models, , , , drop = FALSE]
 pr_ranks  <- pr_ranks[common_models, , , , drop = FALSE]
 
-# 6. Definición de la matriz de 9 experimentos de sensibilidad (E0 a E8)
-experiments_def <- list(
+# 6. Definición de la matriz de experimentos de sensibilidad (E0 a E8 o configurados)
+experiments_def_default <- list(
   E0 = list(name = "E0_Control_Equilibrado",       wt = 1, wp = 1, seas = c(1, 1, 1, 1, 1), desc = "Control / Balance General"),
   E1 = list(name = "E1_Enfasis_Temperatura",      wt = 2, wp = 1, seas = c(1, 1, 1, 1, 1), desc = "Énfasis en Temperatura"),
   E2 = list(name = "E2_Enfasis_Precipitacion",     wt = 1, wp = 2, seas = c(1, 1, 1, 1, 1), desc = "Énfasis en Precipitación"),
@@ -184,6 +184,25 @@ experiments_def <- list(
   E7 = list(name = "E7_Solo_Temperatura",         wt = 2, wp = 0, seas = c(1, 1, 1, 1, 1), desc = "Termodinámica Pura (Solo Temp)"),
   E8 = list(name = "E8_Solo_Precipitacion",        wt = 0, wp = 2, seas = c(1, 1, 1, 1, 1), desc = "Hidrología Pura (Solo Lluvia)")
 )
+
+experiments_def <- experiments_def_default
+
+if (exists("cfg") && !is.null(cfg$experiments) && length(cfg$experiments) > 0) {
+  custom_exp <- list()
+  for (exp_key in names(cfg$experiments)) {
+    e <- cfg$experiments[[exp_key]]
+    custom_exp[[exp_key]] <- list(
+      name = e$name %||% exp_key,
+      wt = as.numeric(e$wt %||% 1),
+      wp = as.numeric(e$wp %||% 1),
+      seas = as.numeric(unlist(e$seasons %||% c(1, 1, 1, 1, 1))),
+      desc = e$desc %||% exp_key
+    )
+  }
+  if (length(custom_exp) > 0) {
+    experiments_def <- custom_exp
+  }
+}
 
 # Mapeo inverso exacto y robusto hacia los nombres de modelos en ESGF
 map_df <- data.frame(
@@ -207,7 +226,7 @@ rank_matrix <- matrix(NA, nrow = length(common_models), ncol = length(experiment
 score_matrix <- matrix(NA, nrow = length(common_models), ncol = length(experiments_def),
                        dimnames = list(common_models, names(experiments_def)))
 
-cat("--- EJECUTANDO LOS 9 EXPERIMENTOS DE SENSIBILIDAD (E0 a E8) ---\n")
+cat(sprintf("--- EJECUTANDO LOS %d EXPERIMENTOS DE SENSIBILIDAD CONFIGURADOS ---\n", length(experiments_def)))
 for (exp_id in names(experiments_def)) {
   exp <- experiments_def[[exp_id]]
   
