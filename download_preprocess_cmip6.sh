@@ -69,6 +69,12 @@ REMOTE_SSH_PORT="${REMOTE_SSH_PORT:-22}"
 CLEANUP_LOCAL_AFTER_SYNC="${CLEANUP_LOCAL_AFTER_SYNC:-true}"
 
 # ------------------------------------------------------------------------------
+# Tolerancia a Fallos y Reintentos Automáticos
+# ------------------------------------------------------------------------------
+MAX_DOWNLOAD_RETRIES="${MAX_DOWNLOAD_RETRIES:-3}"
+FAILED_LOG="${FAILED_LOG:-failed_combinations.tsv}"
+
+# ------------------------------------------------------------------------------
 # Períodos de Interés Configurables (Personalizables según el proyecto)
 # ------------------------------------------------------------------------------
 HISTORICAL_START_YEAR="${HISTORICAL_START_YEAR:-1950}"
@@ -220,18 +226,63 @@ transfer_and_cleanup() {
         fi
 
         if [ "$transfer_success" = true ]; then
-            echo " [TRANSFERENCIA] ✅ Archivo $fname transferido con éxito al almacenamiento remoto."
-            # Limpiar archivo local procesado para liberar disco
-            if [ "$CLEANUP_LOCAL_AFTER_SYNC" == "true" ]; then
-                rm -f "$local_file"
-                echo " [LIMPIEZA] 🗑️  Archivo local procesado eliminado ($fname)."
+            # Verificar que el archivo en el host remoto existe y es accesible
+            local remote_valid=false
+            if remote_file_exists "$model" "$fname"; then
+                remote_valid=true
             fi
-            return 0
+
+            if [ "$remote_valid" = true ]; then
+                echo " [TRANSFERENCIA] ✅ Archivo $fname verificado en el almacenamiento remoto."
+                # Limpiar archivo local procesado para liberar disco
+                if [ "$CLEANUP_LOCAL_AFTER_SYNC" == "true" ]; then
+                    rm -f "$local_file"
+                    echo " [LIMPIEZA] 🗑️  Archivo local procesado eliminado ($fname)."
+                fi
+                return 0
+            else
+                echo " [ERROR TRANSFERENCIA] ⚠️ La transferencia reportó éxito pero el archivo remoto no se pudo verificar. Se conserva copia local."
+                return 1
+            fi
         else
             echo " [ERROR TRANSFERENCIA] ⚠️ No se pudo transferir $fname a ${SSH_TARGET}. Se conserva el archivo local en $local_file"
             return 1
         fi
     fi
+}
+
+# ------------------------------------------------------------------------------
+# Validación de Integridad de Chunks NetCDF
+# ------------------------------------------------------------------------------
+
+validate_raw_chunks() {
+    local raw_dir="$1"
+    local expected_count="$2"
+
+    local actual_files=("$raw_dir"/*.nc)
+    if [ ! -e "${actual_files[0]}" ]; then
+        return 1
+    fi
+    local actual_count=${#actual_files[@]}
+    if [ "$actual_count" -ne "$expected_count" ]; then
+        echo " [VALIDACIÓN ERROR] Se esperaban $expected_count chunks, pero solo hay $actual_count en $raw_dir."
+        return 1
+    fi
+
+    # Comprobar que cada chunk sea un archivo NetCDF estructuralmente válido
+    for r_file in "${actual_files[@]}"; do
+        local f_sz
+        f_sz=$(wc -c < "$r_file" 2>/dev/null || echo 0)
+        if [ "$f_sz" -lt 1024 ]; then
+            echo " [VALIDACIÓN ERROR] Archivo incompleto o vacío ($(basename "$r_file")): $f_sz bytes."
+            return 1
+        fi
+        if ! cdo -s sinfo "$r_file" &>/dev/null; then
+            echo " [VALIDACIÓN ERROR] Estructura NetCDF no válida o corrupta en $(basename "$r_file")."
+            return 1
+        fi
+    done
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -457,23 +508,47 @@ main() {
             continue
         fi
 
-        echo " [1/3 DESCARGA] 📥 Descargando $num_chunks chunks con aria2c..."
+        local download_ok=false
+        for attempt in $(seq 1 "$MAX_DOWNLOAD_RETRIES"); do
+            echo " [1/3 DESCARGA] 📥 Descargando $num_chunks chunks con aria2c (Intento $attempt/$MAX_DOWNLOAD_RETRIES)..."
 
-        aria2c \
-            --input-file="$aria2_input" \
-            --max-concurrent-downloads="$MAX_CONCURRENT_DOWNLOADS" \
-            --max-connection-per-server="$ARIA2_CONNECTIONS" \
-            --split="$ARIA2_CONNECTIONS" \
-            --min-split-size=1M \
-            --max-download-limit="$MAX_DOWNLOAD_LIMIT" \
-            --auto-file-renaming=false \
-            --allow-overwrite=true \
-            --conditional-get=true \
-            --timeout=60 \
-            --max-tries=5 \
-            --retry-wait=3 \
-            --console-log-level=warn \
-            --summary-interval=10
+            aria2c \
+                --input-file="$aria2_input" \
+                --max-concurrent-downloads="$MAX_CONCURRENT_DOWNLOADS" \
+                --max-connection-per-server="$ARIA2_CONNECTIONS" \
+                --split="$ARIA2_CONNECTIONS" \
+                --min-split-size=1M \
+                --max-download-limit="$MAX_DOWNLOAD_LIMIT" \
+                --auto-file-renaming=false \
+                --allow-overwrite=true \
+                --conditional-get=true \
+                --timeout=60 \
+                --max-tries=5 \
+                --retry-wait=3 \
+                --console-log-level=warn \
+                --summary-interval=10 || true
+
+            # Validar integridad estructural y completitud de los chunks descargados
+            if validate_raw_chunks "$raw_dir" "$num_chunks"; then
+                download_ok=true
+                echo " [VALIDACIÓN OK] ✅ Todos los $num_chunks chunks NetCDF son íntegros y válidos."
+                break
+            else
+                echo " [ADVERTENCIA] Falló la validación de chunks en el intento $attempt/$MAX_DOWNLOAD_RETRIES."
+                if [ "$attempt" -lt "$MAX_DOWNLOAD_RETRIES" ]; then
+                    local backoff_sec=$((attempt * 10))
+                    echo " [REINTENTO] ⏳ Esperando $backoff_sec segundos antes de reintentar descarga..."
+                    sleep "$backoff_sec"
+                fi
+            fi
+        done
+
+        if [ "$download_ok" = false ]; then
+            echo " [ERROR CRÍTICO] ❌ No se pudo descargar/validar $model $exp $var tras $MAX_DOWNLOAD_RETRIES intentos."
+            echo -e "${model}\t${variant}\t${exp}\t${var}\tDescarga incompleta o corrupta tras $MAX_DOWNLOAD_RETRIES intentos\t$(date '+%Y-%m-%d %H:%M:%S')" >> "$FAILED_LOG"
+            rm -rf "$var_temp_dir"
+            continue
+        fi
 
         # ----------------------------------------------------------------------
         # C. Esperar a que el worker de CDO previo termine antes de lanzar el nuevo
@@ -512,11 +587,18 @@ main() {
 
     echo ""
     echo "======================================================================"
-    echo " PIPELINE FINALIZADO EXITOSAMENTE"
+    echo " PIPELINE FINALIZADO"
     echo "======================================================================"
     echo " Total combinaciones evaluadas : $total_combos"
     echo " Procesadas en esta sesión     : $processed_count"
     echo " Omitidas (ya existentes)      : $skipped_count"
+    if [ -f "$FAILED_LOG" ] && [ -s "$FAILED_LOG" ]; then
+        local failed_count
+        failed_count=$(wc -l < "$FAILED_LOG")
+        echo " Combinaciones con fallos      : $failed_count (Registradas en $FAILED_LOG)"
+    else
+        echo " Combinaciones con fallos      : 0 (100% de éxito)"
+    fi
     if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
         echo " Almacenamiento final remoto   : ${SSH_TARGET}:${REMOTE_DEST_DIR}"
     else
