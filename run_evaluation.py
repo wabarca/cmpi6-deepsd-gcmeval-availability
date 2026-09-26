@@ -17,16 +17,216 @@ Funcionalidades:
 import os
 import sys
 import glob
+import json
 import shutil
 import argparse
 import subprocess
 from pathlib import Path
+
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
 
 # Configurar salida estándar en UTF-8 para evitar errores de codificación en consola de Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+# Catálogo de regiones SREX y dominios disponibles en GCMEval
+AVAILABLE_REGIONS = [
+    "Central America/Mexico [CAM:6]",
+    "small islands regions Caribbean",
+    "Amazon [AMZ:7]",
+    "West Coast South America [WSA:9]",
+    "Southeastern South America [SSA:10]",
+    "North-East Brazil [NEB:8]",
+    "Central North America [CNA:4]",
+    "East North America [ENA:5]",
+    "Global"
+]
+
+AVAILABLE_OBS_TEMP = ["ERA5", "NCEP", "CRU"]
+AVAILABLE_OBS_PREC = ["GPCP", "CHIRPS", "MSWEP"]
+
+
+def get_default_config():
+    """Genera la estructura de configuración predeterminada."""
+    return {
+        "scenario": "ssp585",
+        "observations": {
+            "temperature": "ERA5",
+            "precipitation": "GPCP"
+        },
+        "regions": {
+            "primary": {
+                "name": "Central America/Mexico [CAM:6]",
+                "weight": 1.0
+            },
+            "secondary": {
+                "enabled": False,
+                "name": "small islands regions Caribbean",
+                "weight": 0.3
+            }
+        },
+        "metrics_weights": {
+            "bias": 1.0,
+            "std_dev": 1.0,
+            "correlation": 1.0,
+            "rmse": 1.0
+        },
+        "experiments": {
+            "E0": {"name": "E0_Control_Equilibrado", "wt": 1.0, "wp": 1.0, "seasons": [1, 1, 1, 1, 1], "desc": "Control / Balance General"},
+            "E1": {"name": "E1_Enfasis_Temperatura", "wt": 2.0, "wp": 1.0, "seasons": [1, 1, 1, 1, 1], "desc": "Énfasis en Temperatura"},
+            "E2": {"name": "E2_Enfasis_Precipitacion", "wt": 1.0, "wp": 2.0, "seasons": [1, 1, 1, 1, 1], "desc": "Énfasis en Precipitación"},
+            "E3": {"name": "E3_Epoca_Seca", "wt": 1.0, "wp": 1.0, "seasons": [1, 2, 2, 0, 0], "desc": "Época Seca (Estiaje DJF+MAM)"},
+            "E4": {"name": "E4_Epoca_Lluviosa", "wt": 1.0, "wp": 1.0, "seasons": [1, 0, 2, 2, 2], "desc": "Época Lluviosa (MAM+JJA+SON)"},
+            "E5": {"name": "E5_Temperatura_Epoca_Seca", "wt": 2.0, "wp": 1.0, "seasons": [1, 2, 2, 0, 0], "desc": "Temperatura en Época Seca"},
+            "E6": {"name": "E6_Precipitacion_Lluviosa", "wt": 1.0, "wp": 2.0, "seasons": [1, 0, 2, 2, 2], "desc": "Precipitación en Época Lluviosa"},
+            "E7": {"name": "E7_Solo_Temperatura", "wt": 2.0, "wp": 0.0, "seasons": [1, 1, 1, 1, 1], "desc": "Termodinámica Pura (Solo Temp)"},
+            "E8": {"name": "E8_Solo_Precipitacion", "wt": 0.0, "wp": 2.0, "seasons": [1, 1, 1, 1, 1], "desc": "Hidrología Pura (Solo Lluvia)"}
+        }
+    }
+
+
+def load_or_create_config(config_path):
+    """Carga el archivo de configuración YAML o lo crea si no existe."""
+    p = Path(config_path)
+    if p.is_file():
+        try:
+            if HAS_YAML:
+                with open(p, "r", encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f)
+                    if isinstance(cfg, dict):
+                        return cfg
+            else:
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"[AVISO] No se pudo leer '{config_path}': {e}. Usando configuración por defecto.")
+
+    cfg = get_default_config()
+    save_config(cfg, config_path)
+    return cfg
+
+
+def save_config(config, config_path):
+    """Guarda la configuración en formato YAML (o JSON como fallback)."""
+    p = Path(config_path)
+    try:
+        if HAS_YAML:
+            with open(p, "w", encoding="utf-8") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        else:
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"[ERROR] No se pudo guardar la configuración en '{config_path}': {e}")
+        return False
+
+
+def print_config_summary(config):
+    """Muestra en consola un resumen visual estructurado de los parámetros activos."""
+    scen = config.get("scenario", "ssp585")
+    obs = config.get("observations", {})
+    obs_t = obs.get("temperature", "ERA5")
+    obs_p = obs.get("precipitation", "GPCP")
+    
+    regs = config.get("regions", {})
+    reg_p = regs.get("primary", {})
+    p_name = reg_p.get("name", "Central America/Mexico [CAM:6]")
+    p_weight = float(reg_p.get("weight", 1.0))
+    
+    reg_s = regs.get("secondary", {})
+    s_enabled = bool(reg_s.get("enabled", False))
+    s_name = reg_s.get("name", "Desactivada")
+    s_weight = float(reg_s.get("weight", 0.3)) if s_enabled else 0.0
+
+    total_w = p_weight + s_weight
+    p_pct = (p_weight / total_w) * 100 if total_w > 0 else 100
+    s_pct = (s_weight / total_w) * 100 if total_w > 0 else 0
+
+    metrics = config.get("metrics_weights", {})
+    w_bias = float(metrics.get("bias", 1.0))
+    w_sd = float(metrics.get("std_dev", 1.0))
+    w_corr = float(metrics.get("correlation", 1.0))
+    w_rmse = float(metrics.get("rmse", 1.0))
+
+    n_exp = len(config.get("experiments", {}))
+
+    print("=" * 75)
+    print(" CONFIGURACIÓN ACTIVA DE EVALUACIÓN CLIMATOLÓGICA (GCMEVAL)")
+    print("=" * 75)
+    print(f" [1] Escenario / Forzamiento : {scen} (Período base historical 1981-2014)")
+    print(f" [2] Observaciones de Ref.   : Temp: {obs_t} | Prec: {obs_p}")
+    print(f" [3] Región Primaria         : {p_name} ({p_pct:.1f}% del peso)")
+    if s_enabled:
+        print(f" [4] Región Secundaria       : {s_name} ({s_pct:.1f}% del peso) [ACTIVADA]")
+    else:
+        print(f" [4] Región Secundaria       : Desactivada (Solo región primaria)")
+    print(f" [5] Ponderación de Métricas : Bias={w_bias:.1f} | Desv.Est={w_sd:.1f} | Corr={w_corr:.1f} | RMSE={w_rmse:.1f}")
+    print(f" [6] Matriz de Sensibilidad  : {n_exp} Experimentos configurados (E0 a E{n_exp - 1})")
+    print("=" * 75)
+
+
+def interactive_config_wizard(config, config_path):
+    """Asistente interactivo por consola para modificar los parámetros de evaluación."""
+    print("\n--- ASISTENTE INTERACTIVO DE CONFIGURACIÓN ---")
+    print("(Presiona ENTER en cualquier opción para mantener el valor actual)\n")
+
+    # 1. Región Primaria
+    print("Seleccione la Región Primaria:")
+    for idx, reg in enumerate(AVAILABLE_REGIONS, 1):
+        curr_mark = " (Actual)" if reg == config["regions"]["primary"]["name"] else ""
+        print(f"  [{idx}] {reg}{curr_mark}")
+    ans = input(f"Número de región primaria [1-{len(AVAILABLE_REGIONS)}]: ").strip()
+    if ans.isdigit() and 1 <= int(ans) <= len(AVAILABLE_REGIONS):
+        config["regions"]["primary"]["name"] = AVAILABLE_REGIONS[int(ans) - 1]
+
+    # 2. Región Secundaria
+    curr_s_en = config["regions"]["secondary"].get("enabled", False)
+    s_prompt = "s" if curr_s_en else "n"
+    ans_s = input(f"\n¿Desea activar un Dominio Secundario? (s/n) [{s_prompt}]: ").strip().lower()
+    if ans_s in ("s", "si", "y", "yes"):
+        config["regions"]["secondary"]["enabled"] = True
+        print("\nSeleccione la Región Secundaria:")
+        for idx, reg in enumerate(AVAILABLE_REGIONS, 1):
+            curr_mark = " (Actual)" if reg == config["regions"]["secondary"]["name"] else ""
+            print(f"  [{idx}] {reg}{curr_mark}")
+        ans_reg_s = input(f"Número de región secundaria [1-{len(AVAILABLE_REGIONS)}]: ").strip()
+        if ans_reg_s.isdigit() and 1 <= int(ans_reg_s) <= len(AVAILABLE_REGIONS):
+            config["regions"]["secondary"]["name"] = AVAILABLE_REGIONS[int(ans_reg_s) - 1]
+        
+        curr_w_s = config["regions"]["secondary"].get("weight", 0.3)
+        ans_w_s = input(f"Peso relativo del dominio secundario (0.1 a 1.0) [{curr_w_s}]: ").strip()
+        try:
+            if ans_w_s:
+                config["regions"]["secondary"]["weight"] = float(ans_w_s)
+        except ValueError:
+            pass
+    elif ans_s in ("n", "no"):
+        config["regions"]["secondary"]["enabled"] = False
+
+    # 3. Observaciones
+    print(f"\nConjunto observacional para Temperatura {AVAILABLE_OBS_TEMP}:")
+    curr_obs_t = config["observations"].get("temperature", "ERA5")
+    ans_obs_t = input(f"Observación Temp [{curr_obs_t}]: ").strip().upper()
+    if ans_obs_t in AVAILABLE_OBS_TEMP:
+        config["observations"]["temperature"] = ans_obs_t
+
+    print(f"\nConjunto observacional para Precipitación {AVAILABLE_OBS_PREC}:")
+    curr_obs_p = config["observations"].get("precipitation", "GPCP")
+    ans_obs_p = input(f"Observación Prec [{curr_obs_p}]: ").strip().upper()
+    if ans_obs_p in AVAILABLE_OBS_PREC:
+        config["observations"]["precipitation"] = ans_obs_p
+
+    # Guardar en YAML
+    save_config(config, config_path)
+    print(f"\n[OK] Configuración actualizada y guardada con éxito en '{config_path}'.\n")
+    return config
 
 
 def find_rscript(custom_path=None):
@@ -262,9 +462,10 @@ def check_r_packages(rscript_exe, auto_install=False):
         return True
 
 
-def run_evaluation(rscript_exe, script_path, models_csv=None, output_dir=None):
+def run_evaluation(rscript_exe, script_path, models_csv=None, output_dir=None, config=None):
     """
-    Ejecuta el script de evaluación R con streaming de salida en tiempo real.
+    Ejecuta el script de evaluación R con streaming de salida en tiempo real,
+    pasando los parámetros de configuración en formato JSON temporal.
     """
     repo_root = Path(__file__).parent.resolve()
     target_script = Path(script_path)
@@ -276,13 +477,20 @@ def run_evaluation(rscript_exe, script_path, models_csv=None, output_dir=None):
 
     cmd = [rscript_exe, str(target_script)]
     
+    # Exportar configuración temporal para consumo directo en R
+    temp_json = repo_root / "evaluation_config.json"
+    if config:
+        with open(temp_json, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        cmd.extend(["--config", str(temp_json)])
+
     # Argumentos opcionales
     if models_csv:
         cmd.extend(["--models", str(models_csv)])
     if output_dir:
         cmd.extend(["--output-dir", str(output_dir)])
 
-    print("=" * 75)
+    print("\n" + "=" * 75)
     print("INICIANDO EVALUACIÓN CLIMATOLÓGICA CON GCMEVAL (ORQUESTADOR PYTHON)")
     print("=" * 75)
     print(f"Ejecutable Rscript : {rscript_exe}")
@@ -291,24 +499,32 @@ def run_evaluation(rscript_exe, script_path, models_csv=None, output_dir=None):
     print("=" * 75)
     print()
 
-    # Ejecutar con streaming de salida en vivo (UTF-8 con reemplazo de caracteres no válidos)
-    process = subprocess.Popen(
-        cmd,
-        cwd=str(repo_root),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        universal_newlines=True
-    )
+    # Ejecutar con streaming de salida en vivo
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(repo_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            universal_newlines=True
+        )
 
-    for line in iter(process.stdout.readline, ''):
-        print(line, end='', flush=True)
+        for line in iter(process.stdout.readline, ''):
+            print(line, end='', flush=True)
 
-    process.stdout.close()
-    return_code = process.wait()
+        process.stdout.close()
+        return_code = process.wait()
+    finally:
+        # Limpiar archivo temporal JSON
+        if temp_json.exists():
+            try:
+                temp_json.unlink()
+            except Exception:
+                pass
 
     if return_code != 0:
         print(f"\n[ERROR] El proceso de evaluación en R finalizó con código de error {return_code}.")
@@ -341,6 +557,23 @@ def main():
         description="Orquestador en Python para la Evaluación Climatológica CMIP6 con GCMEval"
     )
     parser.add_argument(
+        "--config",
+        default="evaluation_config.yaml",
+        help="Ruta al archivo de configuración YAML/JSON (por defecto: evaluation_config.yaml)"
+    )
+    parser.add_argument(
+        "-y", "--yes", "--non-interactive",
+        action="store_true",
+        dest="non_interactive",
+        help="Ejecuta directamente sin solicitar confirmación interactiva"
+    )
+    parser.add_argument(
+        "--wizard", "--configure",
+        action="store_true",
+        dest="wizard",
+        help="Inicia el asistente interactivo para modificar los parámetros de evaluación"
+    )
+    parser.add_argument(
         "--r-path",
         default=None,
         help="Ruta explícita al ejecutable Rscript o al directorio de instalación de R"
@@ -363,6 +596,31 @@ def main():
 
     args = parser.parse_args()
 
+    # 1. Cargar o crear configuración de evaluación
+    config = load_or_create_config(args.config)
+
+    # 2. Manejo de asistente interactivo o confirmación por consola
+    if args.wizard:
+        config = interactive_config_wizard(config, args.config)
+        print_config_summary(config)
+    elif not args.non_interactive:
+        print_config_summary(config)
+        try:
+            prompt_msg = " ¿Deseas ejecutar la evaluación con estos parámetros? [S/n / (c)onfigurar]: "
+            user_choice = input(prompt_msg).strip().lower()
+            if user_choice in ("c", "config", "configurar"):
+                config = interactive_config_wizard(config, args.config)
+                print_config_summary(config)
+            elif user_choice in ("n", "no"):
+                print("\n[INFO] Ejecución cancelada por el usuario.")
+                sys.exit(0)
+        except (KeyboardInterrupt, EOFError):
+            print("\n[INFO] Cancelado por el usuario.")
+            sys.exit(0)
+    else:
+        print_config_summary(config)
+
+    # 3. Detectar ejecutable Rscript
     rscript_exe = find_rscript(args.r_path)
     if not rscript_exe:
         print("[ERROR] No se pudo encontrar el ejecutable 'Rscript' en el sistema.")
@@ -381,10 +639,10 @@ def main():
         print()
         sys.exit(1)
 
-    print(f"[INFO] Ejecutable R detectado: {rscript_exe}")
+    print(f"\n[INFO] Ejecutable R detectado: {rscript_exe}")
 
     check_r_packages(rscript_exe, auto_install=args.install_deps)
-    run_evaluation(rscript_exe, args.script, models_csv=args.models_csv)
+    run_evaluation(rscript_exe, args.script, models_csv=args.models_csv, config=config)
 
 
 if __name__ == "__main__":

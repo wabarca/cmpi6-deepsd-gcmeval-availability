@@ -1,0 +1,91 @@
+# ==============================================================================
+# CONFIGURACIÓN DEL MARCO DE EVALUACIÓN CLIMATOLÓGICA CMIP6 (GCMEVAL)
+# ==============================================================================
+# Este archivo define los parámetros para la evaluación y ranking multicriterio
+# de modelos CMIP6 para la región de Centroamérica y dominios adyacentes.
+# Puede editar este archivo manualmente o mediante el asistente interactivo:
+#   python run_evaluation.py
+# ==============================================================================
+
+# 1. Escenario de Emisiones / Forzamiento Radiativo
+scenario: "ssp585"
+
+# 2. Conjuntos de Datos Observacionales de Referencia
+observations:
+  temperature: "ERA5"      # Opciones: ERA5, NCEP, CRU
+  precipitation: "GPCP"    # Opciones: GPCP, CHIRPS, MSWEP
+
+# 3. Regiones de Evaluación y Ponderaciones Espaciales
+regions:
+  primary:
+    name: "Central America/Mexico [CAM:6]"
+    weight: 1.0
+  secondary:
+    enabled: false
+    name: "small islands regions Caribbean"  # Opciones: "Amazon [AMZ:7]", "West Coast South America [WSA:9]", "small islands regions Caribbean"
+    weight: 0.3
+
+# 4. Ponderación de Métricas Climatológicas
+metrics_weights:
+  bias: 1.0               # Sesgo medio sistemático
+  std_dev: 1.0            # Amplitud de la variabilidad interanual
+  correlation: 1.0        # Patrón espacial de correlación
+  rmse: 1.0               # Error cuadrático medio espacial centrado
+
+# 5. Definición de la Matriz de Experimentos de Sensibilidad (E0 a E8)
+# wt: peso temperatura, wp: peso precipitación, seasons: [Anual, DJF, MAM, JJA, SON]
+experiments:
+  E0:
+    name: "E0_Control_Equilibrado"
+    wt: 1.0
+    wp: 1.0
+    seasons: [1, 1, 1, 1, 1]
+    desc: "Control / Balance General (Temp 50%, Prec 50%, Todo el año)"
+  E1:
+    name: "E1_Enfasis_Temperatura"
+    wt: 2.0
+    wp: 1.0
+    seasons: [1, 1, 1, 1, 1]
+    desc: "Énfasis en Temperatura (Temp 67%, Prec 33%)"
+  E2:
+    name: "E2_Enfasis_Precipitacion"
+    wt: 1.0
+    wp: 2.0
+    seasons: [1, 1, 1, 1, 1]
+    desc: "Énfasis en Precipitación (Temp 33%, Prec 67%)"
+  E3:
+    name: "E3_Epoca_Seca"
+    wt: 1.0
+    wp: 1.0
+    seasons: [1, 2, 2, 0, 0]
+    desc: "Época Seca (Estiaje y transición: Anual + DJF + MAM)"
+  E4:
+    name: "E4_Epoca_Lluviosa"
+    wt: 1.0
+    wp: 1.0
+    seasons: [1, 0, 2, 2, 2]
+    desc: "Época Lluviosa (Temporada húmeda y canícula: MAM + JJA + SON)"
+  E5:
+    name: "E5_Temperatura_Epoca_Seca"
+    wt: 2.0
+    wp: 1.0
+    seasons: [1, 2, 2, 0, 0]
+    desc: "Temperatura en Época Seca (Olas de calor y estiaje)"
+  E6:
+    name: "E6_Precipitacion_Lluviosa"
+    wt: 1.0
+    wp: 2.0
+    seasons: [1, 0, 2, 2, 2]
+    desc: "Precipitación en Época Lluviosa (Temporada ciclónica y MSD)"
+  E7:
+    name: "E7_Solo_Temperatura"
+    wt: 2.0
+    wp: 0.0
+    seasons: [1, 1, 1, 1, 1]
+    desc: "Termodinámica Pura (100% Temperatura)"
+  E8:
+    name: "E8_Solo_Precipitacion"
+    wt: 0.0
+    wp: 2.0
+    seasons: [1, 1, 1, 1, 1]
+    desc: "Hidrología Pura (100% Precipitación)"

@@ -38,6 +38,9 @@ if (!file.exists(models_csv)) {
 # 2. Cargar funciones base de GCMEval
 source(file.path(gcmeval_dir, "front-end", "global.R"))
 
+# Helper para valores por defecto
+`%||%` <- function(a, b) if (!is.null(a) && !is.na(a)) a else b
+
 # 3. Leer lista de modelos seleccionados de ESGF MetaGrid
 target_models_raw <- readLines(models_csv)
 target_models_raw <- trimws(target_models_raw)
@@ -46,15 +49,79 @@ target_models_raw <- target_models_raw[target_models_raw != "" & !grepl("^#", ta
 cat(sprintf("=======================================================================\n"))
 cat(sprintf("  EVALUACIÓN CLIMATOLÓGICA Y RANKINGS GCMEVAL PARA CENTROAMÉRICA (CAM) \n"))
 cat(sprintf("=======================================================================\n"))
-cat(sprintf("Modelos candidatos cargados desde '%s': %d\n", models_csv, length(target_models_raw)))
+cat(sprintf("Modelos candidatos cargados desde '%s': %d\n\n", models_csv, length(target_models_raw)))
 
-# 4. Parámetros de evaluación
+# 4. Parámetros de evaluación configurables
 rcp_selected <- "ssp585"
 ref_tas <- "ERA5"
 ref_pr  <- "GPCP"
 region_cam <- "Central America/Mexico [CAM:6]"
 regiones <- list(region_cam)
 w_region <- c(1)
+w_metric <- c(1, 1, 1, 1)
+
+# Comprobar si se pasa archivo de configuración JSON/YAML
+cmd_args <- commandArgs(trailingOnly = TRUE)
+config_path <- NULL
+for (i in seq_along(cmd_args)) {
+  if (cmd_args[i] == "--config" && i < length(cmd_args)) {
+    config_path <- cmd_args[i + 1]
+  }
+}
+if (is.null(config_path)) {
+  if (file.exists("evaluation_config.json")) config_path <- "evaluation_config.json"
+  else if (file.exists(file.path(gcmeval_dir, "evaluation_config.json"))) config_path <- file.path(gcmeval_dir, "evaluation_config.json")
+}
+
+if (!is.null(config_path) && file.exists(config_path)) {
+  cat(sprintf("[CONFIG] Cargando parámetros desde: %s\n", config_path))
+  tryCatch({
+    suppressPackageStartupMessages(library(jsonlite))
+    cfg <- jsonlite::fromJSON(config_path, simplifyVector = FALSE)
+    
+    if (!is.null(cfg$scenario)) rcp_selected <- cfg$scenario
+    if (!is.null(cfg$observations$temperature)) ref_tas <- cfg$observations$temperature
+    if (!is.null(cfg$observations$precipitation)) ref_pr <- cfg$observations$precipitation
+    
+    # Cargar regiones y ponderación espacial
+    if (!is.null(cfg$regions$primary$name)) {
+      reg_list <- list(cfg$regions$primary$name)
+      w_list <- c(as.numeric(cfg$regions$primary$weight %||% 1.0))
+      
+      if (isTRUE(cfg$regions$secondary$enabled) && !is.null(cfg$regions$secondary$name) && cfg$regions$secondary$name != "") {
+        reg_list <- c(reg_list, list(cfg$regions$secondary$name))
+        w_list <- c(w_list, as.numeric(cfg$regions$secondary$weight %||% 0.3))
+      }
+      
+      # Normalizar pesos regionales
+      if (sum(w_list) > 0) {
+        w_list <- w_list / sum(w_list)
+      }
+      regiones <- reg_list
+      w_region <- w_list
+    }
+    
+    # Cargar ponderación de métricas
+    if (!is.null(cfg$metrics_weights)) {
+      w_metric <- c(
+        as.numeric(cfg$metrics_weights$bias %||% 1.0),
+        as.numeric(cfg$metrics_weights$std_dev %||% 1.0),
+        as.numeric(cfg$metrics_weights$correlation %||% 1.0),
+        as.numeric(cfg$metrics_weights$rmse %||% 1.0)
+      )
+    }
+  }, error = function(e) {
+    cat(sprintf("[AVISO] Error al leer configuración (%s): %s. Usando valores predeterminados.\n", config_path, e$message))
+  })
+}
+
+cat(sprintf("Configuración activa de evaluación:\n"))
+cat(sprintf("  • Escenario / RCP      : %s\n", rcp_selected))
+cat(sprintf("  • Referencia Temp      : %s\n", ref_tas))
+cat(sprintf("  • Referencia Prec      : %s\n", ref_pr))
+cat(sprintf("  • Región(es)           : %s\n", paste(unlist(regiones), collapse = " + ")))
+cat(sprintf("  • Ponderación Espacial : %s\n", paste(paste0(unlist(regiones), " (", round(w_region * 100, 1), "%)"), collapse = " | ")))
+cat(sprintf("  • Pesos de Métricas    : Bias=%.1f, SD=%.1f, Corr=%.1f, RMSE=%.1f\n\n", w_metric[1], w_metric[2], w_metric[3], w_metric[4]))
 
 # Obtener catálogo de GCMs en statistics
 stats_all <- dataPrep(rcp = rcp_selected)
@@ -117,8 +184,6 @@ experiments_def <- list(
   E7 = list(name = "E7_Solo_Temperatura",         wt = 2, wp = 0, seas = c(1, 1, 1, 1, 1), desc = "Termodinámica Pura (Solo Temp)"),
   E8 = list(name = "E8_Solo_Precipitacion",        wt = 0, wp = 2, seas = c(1, 1, 1, 1, 1), desc = "Hidrología Pura (Solo Lluvia)")
 )
-
-w_metric <- c(1, 1, 1, 1) # bias=1, sd=1, corr=1, rmse=1
 
 # Mapeo inverso exacto y robusto hacia los nombres de modelos en ESGF
 map_df <- data.frame(
