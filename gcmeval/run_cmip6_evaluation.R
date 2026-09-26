@@ -196,6 +196,7 @@ if (exists("cfg") && !is.null(cfg$experiments) && length(cfg$experiments) > 0) {
       wt = as.numeric(e$wt %||% 1),
       wp = as.numeric(e$wp %||% 1),
       seas = as.numeric(unlist(e$seasons %||% c(1, 1, 1, 1, 1))),
+      w_metric = as.numeric(unlist(e$metrics %||% w_metric)),
       desc = e$desc %||% exp_key
     )
   }
@@ -241,8 +242,9 @@ for (exp_id in names(experiments_def)) {
     }
   }
   
-  # Ponderación de métricas de error
-  scores <- as.vector(consolidated %*% w_metric)
+  # Ponderación de métricas de error (específica del experimento o global)
+  exp_w_metric <- exp$w_metric %||% w_metric
+  scores <- as.vector(consolidated %*% exp_w_metric)
   ranks  <- rank(scores)
   
   df_exp <- data.frame(

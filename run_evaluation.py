@@ -78,15 +78,15 @@ def get_default_config():
             "rmse": 1.0
         },
         "experiments": {
-            "E0": {"name": "E0_Control_Equilibrado", "wt": 1.0, "wp": 1.0, "seasons": [1, 1, 1, 1, 1], "desc": "Control / Balance General"},
-            "E1": {"name": "E1_Enfasis_Temperatura", "wt": 2.0, "wp": 1.0, "seasons": [1, 1, 1, 1, 1], "desc": "Énfasis en Temperatura"},
-            "E2": {"name": "E2_Enfasis_Precipitacion", "wt": 1.0, "wp": 2.0, "seasons": [1, 1, 1, 1, 1], "desc": "Énfasis en Precipitación"},
-            "E3": {"name": "E3_Epoca_Seca", "wt": 1.0, "wp": 1.0, "seasons": [1, 2, 2, 0, 0], "desc": "Época Seca (Estiaje DJF+MAM)"},
-            "E4": {"name": "E4_Epoca_Lluviosa", "wt": 1.0, "wp": 1.0, "seasons": [1, 0, 2, 2, 2], "desc": "Época Lluviosa (MAM+JJA+SON)"},
-            "E5": {"name": "E5_Temperatura_Epoca_Seca", "wt": 2.0, "wp": 1.0, "seasons": [1, 2, 2, 0, 0], "desc": "Temperatura en Época Seca"},
-            "E6": {"name": "E6_Precipitacion_Lluviosa", "wt": 1.0, "wp": 2.0, "seasons": [1, 0, 2, 2, 2], "desc": "Precipitación en Época Lluviosa"},
-            "E7": {"name": "E7_Solo_Temperatura", "wt": 2.0, "wp": 0.0, "seasons": [1, 1, 1, 1, 1], "desc": "Termodinámica Pura (Solo Temp)"},
-            "E8": {"name": "E8_Solo_Precipitacion", "wt": 0.0, "wp": 2.0, "seasons": [1, 1, 1, 1, 1], "desc": "Hidrología Pura (Solo Lluvia)"}
+            "E0": {"name": "E0_Control_Equilibrado", "wt": 1.0, "wp": 1.0, "seasons": [1, 1, 1, 1, 1], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Control / Balance General (Temp 50%, Prec 50%, Todo el año, Métricas 1:1:1:1)"},
+            "E1": {"name": "E1_Enfasis_Temperatura", "wt": 2.0, "wp": 1.0, "seasons": [1, 1, 1, 1, 1], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Énfasis en Temperatura (Temp 67%, Prec 33%)"},
+            "E2": {"name": "E2_Enfasis_Precipitacion", "wt": 1.0, "wp": 2.0, "seasons": [1, 1, 1, 1, 1], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Énfasis en Precipitación (Temp 33%, Prec 67%)"},
+            "E3": {"name": "E3_Epoca_Seca", "wt": 1.0, "wp": 1.0, "seasons": [1, 2, 2, 0, 0], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Época Seca (Estiaje y transición: Anual + DJF + MAM)"},
+            "E4": {"name": "E4_Epoca_Lluviosa", "wt": 1.0, "wp": 1.0, "seasons": [1, 0, 2, 2, 2], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Época Lluviosa (Temporada húmeda y canícula: MAM + JJA + SON)"},
+            "E5": {"name": "E5_Temperatura_Epoca_Seca", "wt": 2.0, "wp": 1.0, "seasons": [1, 2, 2, 0, 0], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Temperatura en Época Seca (Olas de calor y estiaje)"},
+            "E6": {"name": "E6_Precipitacion_Lluviosa", "wt": 1.0, "wp": 2.0, "seasons": [1, 0, 2, 2, 2], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Precipitación en Época Lluviosa (Temporada ciclónica y MSD)"},
+            "E7": {"name": "E7_Solo_Temperatura", "wt": 2.0, "wp": 0.0, "seasons": [1, 1, 1, 1, 1], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Termodinámica Pura (100% Temperatura)"},
+            "E8": {"name": "E8_Solo_Precipitacion", "wt": 0.0, "wp": 2.0, "seasons": [1, 1, 1, 1, 1], "metrics": [1.0, 1.0, 1.0, 1.0], "desc": "Hidrología Pura (100% Precipitación)"}
         }
     }
 
@@ -173,8 +173,10 @@ def print_config_summary(config):
     for e_id, e_val in exps.items():
         wt = e_val.get("wt", 1.0)
         wp = e_val.get("wp", 1.0)
+        e_m = e_val.get("metrics", [w_bias, w_sd, w_corr, w_rmse])
+        m_str = f"Métricas=[B:{e_m[0]}, SD:{e_m[1]}, C:{e_m[2]}, R:{e_m[3]}]"
         desc = e_val.get("desc", e_val.get("name", e_id))
-        print(f"       • {e_id:2s} (wt={wt:.1f}, wp={wp:.1f}) : {desc}")
+        print(f"       • {e_id:2s} (wt={wt:.1f}, wp={wp:.1f} | {m_str}) : {desc}")
     print("=" * 78)
 
 
@@ -228,8 +230,8 @@ def interactive_config_wizard(config, config_path):
     if ans_obs_p in AVAILABLE_OBS_PREC:
         config["observations"]["precipitation"] = ans_obs_p
 
-    # 4. Ponderación de Métricas Climatológicas
-    print(f"\n4. PONDERACIÓN DE MÉTRICAS CLIMATOLÓGICAS (Bias, SD, Corr, RMSE):")
+    # 4. Ponderación Global de Métricas Climatológicas
+    print(f"\n4. PONDERACIÓN GLOBAL DE MÉTRICAS CLIMATOLÓGICAS (Bias, SD, Corr, RMSE):")
     for m_key, m_label in [("bias", "Sesgo medio (Bias)"), ("std_dev", "Variabilidad interanual (SD)"), ("correlation", "Patrón espacial (Corr)"), ("rmse", "Error cuadrático (RMSE)")]:
         curr_m_val = config["metrics_weights"].get(m_key, 1.0)
         ans_m = input(f"  Peso para {m_label} [{curr_m_val}]: ").strip()
@@ -240,7 +242,7 @@ def interactive_config_wizard(config, config_path):
                 pass
 
     # 5. Ponderación de Variables y Experimentos
-    print(f"\n5. PONDERACIÓN DE VARIABLES (Temp wt vs Prec wp) Y EXPERIMENTOS:")
+    print(f"\n5. PONDERACIÓN DE VARIABLES (Temp wt vs Prec wp), MÉTRICAS Y EXPERIMENTOS:")
     print("  [1] Mantener la matriz completa de 9 experimentos estándar (E0 a E8)")
     print("  [2] Restaurar experimentos estándar por defecto")
     print("  [3] Definir un único experimento personalizado con pesos a medida")
@@ -252,19 +254,25 @@ def interactive_config_wizard(config, config_path):
     elif ans_exp_mode == "3":
         ans_wt = input("  Peso para Temperatura (wt, ej. 1.0 o 2.0) [1.0]: ").strip() or "1.0"
         ans_wp = input("  Peso para Precipitación (wp, ej. 1.0 o 2.0) [1.0]: ").strip() or "1.0"
+        ans_mb = input("  Peso para Sesgo (Bias) [1.0]: ").strip() or "1.0"
+        ans_ms = input("  Peso para Desv. Estándar (SD) [1.0]: ").strip() or "1.0"
+        ans_mc = input("  Peso para Correlación Espacial (Corr) [1.0]: ").strip() or "1.0"
+        ans_mr = input("  Peso para RMSE [1.0]: ").strip() or "1.0"
         try:
             wt_val = float(ans_wt)
             wp_val = float(ans_wp)
+            m_vals = [float(ans_mb), float(ans_ms), float(ans_mc), float(ans_mr)]
             config["experiments"] = {
                 "E0": {
                     "name": "E0_Personalizado",
                     "wt": wt_val,
                     "wp": wp_val,
                     "seasons": [1, 1, 1, 1, 1],
-                    "desc": f"Experimento Personalizado (wt={wt_val}, wp={wp_val})"
+                    "metrics": m_vals,
+                    "desc": f"Experimento Personalizado (wt={wt_val}, wp={wp_val}, Métricas={m_vals})"
                 }
             }
-            print(f"  -> Configurado experimento único personalizado: Temp wt={wt_val}, Prec wp={wp_val}")
+            print(f"  -> Configurado experimento único personalizado con pesos de variables y métricas.")
         except ValueError:
             pass
 
