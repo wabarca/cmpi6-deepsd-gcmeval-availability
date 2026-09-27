@@ -319,7 +319,7 @@ validate_clipped_chunks() {
 }
 
 # ------------------------------------------------------------------------------
-# 5. Worker de Procesamiento CDO (mergetime + selyear)
+# 5. Worker de Procesamiento CDO (sellonlatbox + mergetime + selyear)
 # ------------------------------------------------------------------------------
 
 process_variable_worker() {
@@ -331,13 +331,34 @@ process_variable_worker() {
     local var_temp_dir="$6"
     local final_file="$7"
 
+    local raw_dir="${var_temp_dir}/raw"
     local clipped_dir="${var_temp_dir}/clipped"
     local fname_final
     fname_final=$(basename "$final_file")
 
-    echo " [CDO PROCESO] ⚙️  Iniciando concatenación y filtrado temporal con $CDO_THREADS hilos para $model $exp $var..."
+    echo " [CDO PROCESO] ⚙️  Iniciando CDO (sellonlatbox + mergetime + selyear) con $CDO_THREADS hilos para $model $exp $var..."
 
-    # 1. Concatenación temporal (mergetime)
+    # 1. Recorte espacial sellonlatbox para todos los brutos en raw/ (si existen)
+    if [ -d "$raw_dir" ]; then
+        for r_file in "$raw_dir"/*.nc; do
+            if [ -f "$r_file" ]; then
+                fn=$(basename "$r_file")
+                c_file="${clipped_dir}/${fn%.*}_clipped.nc"
+                # Recortar solo si el archivo recortado no existe o no es válido
+                if [ ! -f "$c_file" ] || [ "$(wc -c < "$c_file" 2>/dev/null || echo 0)" -lt 1024 ] || ! cdo -s sinfo "$c_file" &>/dev/null; then
+                    if ! cdo -P "$CDO_THREADS" -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file" 2>/dev/null; then
+                        echo " [CDO AVISO] Falló recorte con -P, reintentando en modo estándar para $fn..."
+                        cdo -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file" || true
+                    fi
+                fi
+                # Eliminar el archivo bruto inmediatamente para no saturar disco
+                rm -f "$r_file"
+            fi
+        done
+        rm -rf "$raw_dir"
+    fi
+
+    # 2. Concatenación temporal (mergetime)
     local merged_temp="${var_temp_dir}/merged_all.nc"
     local clipped_files=("$clipped_dir"/*.nc)
 
@@ -350,7 +371,7 @@ process_variable_worker() {
         fi
     fi
 
-    # 2. Selección de período (selyear)
+    # 3. Selección de período (selyear)
     local temp_final="${var_temp_dir}/${fname_final}"
     if [ -f "$merged_temp" ] && [ -s "$merged_temp" ]; then
         if ! cdo -P "$CDO_THREADS" -s selyear,"$selyear_range" "$merged_temp" "$temp_final" 2>/dev/null; then
@@ -360,7 +381,7 @@ process_variable_worker() {
         rm -f "$merged_temp"
     fi
 
-    # 3. Verificar que el NetCDF final sea válido
+    # 4. Verificar que el NetCDF final sea válido
     if [ -f "$temp_final" ] && cdo -s sinfo "$temp_final" &>/dev/null; then
         mkdir -p "$(dirname "$final_file")"
         mv "$temp_final" "$final_file"
@@ -504,7 +525,7 @@ main() {
         fi
 
         # ----------------------------------------------------------------------
-        # B. Checkpoint de Recortes y Descarga Selectiva
+        # B. Checkpoint de Recortes y Descarga Selectiva (Pura Descarga en Hilo Principal)
         # ----------------------------------------------------------------------
         var_temp_dir="${TEMP_DIR}/${model}_${variant}_${exp}_${var}"
         raw_dir="${var_temp_dir}/raw"
@@ -527,119 +548,80 @@ main() {
             continue
         fi
 
-        # 1. Recuperar archivos brutos válidos ya existentes en raw/ de sesiones interrumpidas
+        # Preparar aria2c input SOLO para chunks que no existen ya como NetCDF válidos (en clipped/ o en raw/)
+        aria2_input="${var_temp_dir}/downloads.txt"
+        > "$aria2_input"
+
         for chk_line in "${CHUNK_LINES[@]}"; do
             IFS=$'\t' read -r fname url chk chk_type sz <<< "$chk_line"
             fname=$(echo "$fname" | tr -d '\r')
-            r_file="${raw_dir}/${fname}"
-            c_file="${clipped_dir}/${fname%.*}_clipped.nc"
+            url=$(echo "$url" | tr -d '\r')
+            chk=$(echo "$chk" | tr -d '\r')
+            chk_type=$(echo "$chk_type" | tr -d '\r')
 
-            # Si el chunk recortado ya existe y es válido, eliminar cualquier copia bruta residual
+            c_file="${clipped_dir}/${fname%.*}_clipped.nc"
+            r_file="${raw_dir}/${fname}"
+
+            # Caso 1: Ya está recortado en clipped/
             if [ -f "$c_file" ] && [ "$(wc -c < "$c_file" 2>/dev/null || echo 0)" -ge 1024 ] && cdo -s sinfo "$c_file" &>/dev/null; then
                 rm -f "$r_file"
                 continue
             fi
 
-            # Si el archivo bruto ya fue descargado previamente y es un NetCDF íntegro, recortarlo de inmediato
+            # Caso 2: Ya está completamente descargado en raw/ y es válido
             if [ -f "$r_file" ] && [ "$(wc -c < "$r_file" 2>/dev/null || echo 0)" -ge 1024 ] && cdo -s sinfo "$r_file" &>/dev/null; then
-                echo " [REANUDACIÓN RAW] ⚡ Archivo bruto previo válido detectado: $fname. Recortando..."
-                if ! cdo -P "$CDO_THREADS" -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file" 2>/dev/null; then
-                    cdo -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file"
-                fi
-                rm -f "$r_file"
+                continue
+            fi
+
+            # Caso 3: Falta o está incompleto -> agregar a aria2c
+            echo "$url" >> "$aria2_input"
+            echo "  dir=$raw_dir" >> "$aria2_input"
+            echo "  out=$fname" >> "$aria2_input"
+            if [ -n "$chk" ] && [ "$chk" != "None" ] && [ "$chk_type" == "SHA256" ]; then
+                echo "  checksum=sha-256=$chk" >> "$aria2_input"
             fi
         done
 
-        # 2. Comprobar si TODOS los chunks ya fueron recortados y son válidos en clipped/
-        if validate_clipped_chunks "$clipped_dir" "$total_chunks"; then
-            echo " [CHECKPOINT RECORTES] ⚡ Se encontraron los $total_chunks chunks recortados y válidos en $clipped_dir."
-            echo "                       Se omite la descarga de brutos y se procede directo a CDO."
+        chunks_to_download=$(grep -c "^http" "$aria2_input" || true)
+
+        local download_ok=false
+        if [ "$chunks_to_download" -eq 0 ]; then
+            echo " [CHECKPOINT LISTO] ⚡ Todos los $total_chunks chunks ya están disponibles localmente (en clipped/ o raw/)."
             download_ok=true
         else
-            # Preparar aria2c input SOLO para los chunks que faltan en clipped/
-            aria2_input="${var_temp_dir}/downloads.txt"
-            > "$aria2_input"
+            for attempt in $(seq 1 "$MAX_DOWNLOAD_RETRIES"); do
+                echo " [1/3 DESCARGA] 📥 Descargando $chunks_to_download chunks faltantes con aria2c (Intento $attempt/$MAX_DOWNLOAD_RETRIES)..."
 
-            for chk_line in "${CHUNK_LINES[@]}"; do
-                IFS=$'\t' read -r fname url chk chk_type sz <<< "$chk_line"
-                fname=$(echo "$fname" | tr -d '\r')
-                url=$(echo "$url" | tr -d '\r')
-                chk=$(echo "$chk" | tr -d '\r')
-                chk_type=$(echo "$chk_type" | tr -d '\r')
+                aria2c \
+                    --input-file="$aria2_input" \
+                    --max-concurrent-downloads="$MAX_CONCURRENT_DOWNLOADS" \
+                    --max-connection-per-server="$ARIA2_CONNECTIONS" \
+                    --split="$ARIA2_CONNECTIONS" \
+                    --min-split-size=1M \
+                    --max-download-limit="$MAX_DOWNLOAD_LIMIT" \
+                    --auto-file-renaming=false \
+                    --allow-overwrite=true \
+                    --conditional-get=true \
+                    --timeout=60 \
+                    --max-tries=5 \
+                    --retry-wait=3 \
+                    --console-log-level=warn \
+                    --summary-interval=10 || true
 
-                c_file="${clipped_dir}/${fname%.*}_clipped.nc"
-                # Si el chunk recortado ya existe y es válido, no descargarlo
-                if [ -f "$c_file" ] && [ "$(wc -c < "$c_file" 2>/dev/null || echo 0)" -ge 1024 ] && cdo -s sinfo "$c_file" &>/dev/null; then
-                    continue
-                fi
-
-                echo "$url" >> "$aria2_input"
-                echo "  dir=$raw_dir" >> "$aria2_input"
-                echo "  out=$fname" >> "$aria2_input"
-                if [ -n "$chk" ] && [ "$chk" != "None" ] && [ "$chk_type" == "SHA256" ]; then
-                    echo "  checksum=sha-256=$chk" >> "$aria2_input"
+                # Validar chunks brutos recién descargados
+                if validate_raw_chunks "$raw_dir" "$chunks_to_download"; then
+                    download_ok=true
+                    echo " [VALIDACIÓN BRUTOS OK] ✅ Chunks brutos descargados íntegros."
+                    break
+                else
+                    echo " [ADVERTENCIA] Falló la validación de chunks en el intento $attempt/$MAX_DOWNLOAD_RETRIES."
+                    if [ "$attempt" -lt "$MAX_DOWNLOAD_RETRIES" ]; then
+                        local backoff_sec=$((attempt * 10))
+                        echo " [REINTENTO] ⏳ Esperando $backoff_sec segundos antes de reintentar descarga..."
+                        sleep "$backoff_sec"
+                    fi
                 fi
             done
-
-            chunks_to_download=$(grep -c "^http" "$aria2_input" || true)
-
-            if [ "$chunks_to_download" -eq 0 ]; then
-                download_ok=true
-            else
-                local download_ok=false
-                for attempt in $(seq 1 "$MAX_DOWNLOAD_RETRIES"); do
-                    echo " [1/3 DESCARGA] 📥 Descargando $chunks_to_download chunks faltantes con aria2c (Intento $attempt/$MAX_DOWNLOAD_RETRIES)..."
-
-                    aria2c \
-                        --input-file="$aria2_input" \
-                        --max-concurrent-downloads="$MAX_CONCURRENT_DOWNLOADS" \
-                        --max-connection-per-server="$ARIA2_CONNECTIONS" \
-                        --split="$ARIA2_CONNECTIONS" \
-                        --min-split-size=1M \
-                        --max-download-limit="$MAX_DOWNLOAD_LIMIT" \
-                        --auto-file-renaming=false \
-                        --allow-overwrite=true \
-                        --conditional-get=true \
-                        --timeout=60 \
-                        --max-tries=5 \
-                        --retry-wait=3 \
-                        --console-log-level=warn \
-                        --summary-interval=10 || true
-
-                    # Validar chunks brutos recién descargados
-                    if validate_raw_chunks "$raw_dir" "$chunks_to_download"; then
-                        echo " [VALIDACIÓN BRUTOS OK] ✅ Chunks brutos descargados íntegros. Procediendo al recorte espacial..."
-                        
-                        # Recortar de inmediato cada chunk bruto a clipped/ y borrar el bruto
-                        for r_file in "$raw_dir"/*.nc; do
-                            if [ -f "$r_file" ]; then
-                                fn=$(basename "$r_file")
-                                c_file="${clipped_dir}/${fn%.*}_clipped.nc"
-                                if ! cdo -P "$CDO_THREADS" -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file" 2>/dev/null; then
-                                    echo " [CDO AVISO] Falló recorte con -P, reintentando modo estándar para $fn..."
-                                    cdo -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file"
-                                fi
-                                rm -f "$r_file"
-                            fi
-                        done
-                        rm -rf "$raw_dir"
-
-                        # Validar que todos los recortes totales en clipped/ estén completos
-                        if validate_clipped_chunks "$clipped_dir" "$total_chunks"; then
-                            download_ok=true
-                            echo " [VALIDACIÓN RECORTES OK] ✅ Todos los $total_chunks chunks recortados están listos."
-                            break
-                        fi
-                    else
-                        echo " [ADVERTENCIA] Falló la validación de chunks en el intento $attempt/$MAX_DOWNLOAD_RETRIES."
-                        if [ "$attempt" -lt "$MAX_DOWNLOAD_RETRIES" ]; then
-                            local backoff_sec=$((attempt * 10))
-                            echo " [REINTENTO] ⏳ Esperando $backoff_sec segundos antes de reintentar descarga..."
-                            sleep "$backoff_sec"
-                        fi
-                    fi
-                done
-            fi
         fi
 
         if [ "$download_ok" = false ]; then
@@ -660,9 +642,9 @@ main() {
         fi
 
         # ----------------------------------------------------------------------
-        # D. Lanzar Procesamiento CDO + Sync Remoto en Background
+        # D. Lanzar Procesamiento CDO COMPLETO (sellonlatbox + mergetime + selyear) + Sync Remoto en Background
         # ----------------------------------------------------------------------
-        echo " [2/3 PIPELINE] 🚀 Lanzando CDO + Transferencia remota para $var en segundo plano..."
+        echo " [2/3 PIPELINE] 🚀 Lanzando CDO (recorte + merge + selyear) + Transferencia remota para $var en segundo plano..."
         process_variable_worker "$model" "$variant" "$exp" "$var" "$selyear_range" "$var_temp_dir" "$final_file" &
         BG_PROC_PID=$!
 
