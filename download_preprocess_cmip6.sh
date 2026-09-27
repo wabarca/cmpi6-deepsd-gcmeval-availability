@@ -398,13 +398,20 @@ main() {
     mkdir -p "$LOCAL_OUTPUT_DIR"
     mkdir -p "$TEMP_DIR"
 
-    # Limpieza inteligente de temporales: purgar temporales huérfanos sin datos útiles
+    # Limpieza inteligente de temporales: purgar únicamente carpetas temporales completamente vacías
     if [ -d "$TEMP_DIR" ]; then
         echo " [VERIFICACIÓN TEMPORALES] 🔍 Revisando estado de descargas previas en $TEMP_DIR..."
         for d in "$TEMP_DIR"/*; do
             if [ -d "$d" ]; then
-                # Si no tiene carpeta clipped con archivos, o está vacía, limpiar
-                if [ ! -d "$d/clipped" ] || [ -z "$(ls -A "$d/clipped" 2>/dev/null)" ]; then
+                local has_clipped=false
+                local has_raw=false
+                if [ -d "$d/clipped" ] && [ -n "$(ls -A "$d/clipped" 2>/dev/null)" ]; then
+                    has_clipped=true
+                fi
+                if [ -d "$d/raw" ] && [ -n "$(ls -A "$d/raw" 2>/dev/null)" ]; then
+                    has_raw=true
+                fi
+                if [ "$has_clipped" = false ] && [ "$has_raw" = false ]; then
                     rm -rf "$d" 2>/dev/null || true
                 fi
             fi
@@ -520,13 +527,36 @@ main() {
             continue
         fi
 
-        # 3. Comprobar si TODOS los chunks ya fueron recortados y son válidos en clipped/
+        # 1. Recuperar archivos brutos válidos ya existentes en raw/ de sesiones interrumpidas
+        for chk_line in "${CHUNK_LINES[@]}"; do
+            IFS=$'\t' read -r fname url chk chk_type sz <<< "$chk_line"
+            fname=$(echo "$fname" | tr -d '\r')
+            r_file="${raw_dir}/${fname}"
+            c_file="${clipped_dir}/${fname%.*}_clipped.nc"
+
+            # Si el chunk recortado ya existe y es válido, eliminar cualquier copia bruta residual
+            if [ -f "$c_file" ] && [ "$(wc -c < "$c_file" 2>/dev/null || echo 0)" -ge 1024 ] && cdo -s sinfo "$c_file" &>/dev/null; then
+                rm -f "$r_file"
+                continue
+            fi
+
+            # Si el archivo bruto ya fue descargado previamente y es un NetCDF íntegro, recortarlo de inmediato
+            if [ -f "$r_file" ] && [ "$(wc -c < "$r_file" 2>/dev/null || echo 0)" -ge 1024 ] && cdo -s sinfo "$r_file" &>/dev/null; then
+                echo " [REANUDACIÓN RAW] ⚡ Archivo bruto previo válido detectado: $fname. Recortando..."
+                if ! cdo -P "$CDO_THREADS" -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file" 2>/dev/null; then
+                    cdo -s sellonlatbox,"$LON_LEFT","$LON_RIGHT","$LAT_DOWN","$LAT_UP" "$r_file" "$c_file"
+                fi
+                rm -f "$r_file"
+            fi
+        done
+
+        # 2. Comprobar si TODOS los chunks ya fueron recortados y son válidos en clipped/
         if validate_clipped_chunks "$clipped_dir" "$total_chunks"; then
             echo " [CHECKPOINT RECORTES] ⚡ Se encontraron los $total_chunks chunks recortados y válidos en $clipped_dir."
             echo "                       Se omite la descarga de brutos y se procede directo a CDO."
             download_ok=true
         else
-            # Preparar aria2c input SOLO para los chunks que faltan o están corruptos en clipped/
+            # Preparar aria2c input SOLO para los chunks que faltan en clipped/
             aria2_input="${var_temp_dir}/downloads.txt"
             > "$aria2_input"
 
