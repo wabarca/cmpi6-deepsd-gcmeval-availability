@@ -71,7 +71,7 @@ CLEANUP_LOCAL_AFTER_SYNC="${CLEANUP_LOCAL_AFTER_SYNC:-true}"
 # ------------------------------------------------------------------------------
 # Tolerancia a Fallos y Reintentos Automáticos
 # ------------------------------------------------------------------------------
-MAX_DOWNLOAD_RETRIES="${MAX_DOWNLOAD_RETRIES:-3}"
+MAX_DOWNLOAD_RETRIES="${MAX_DOWNLOAD_RETRIES:-0}" # 0 = Reintentos continuos/infinitos hasta descargar con éxito
 FAILED_LOG="${FAILED_LOG:-failed_combinations.tsv}"
 
 # ------------------------------------------------------------------------------
@@ -589,8 +589,14 @@ main() {
             echo " [CHECKPOINT LISTO] ⚡ Todos los $total_chunks chunks ya están disponibles localmente (en clipped/ o raw/)."
             download_ok=true
         else
-            for attempt in $(seq 1 "$MAX_DOWNLOAD_RETRIES"); do
-                echo " [1/3 DESCARGA] 📥 Descargando $chunks_to_download chunks faltantes con aria2c (Intento $attempt/$MAX_DOWNLOAD_RETRIES)..."
+            local attempt=0
+            while true; do
+                attempt=$((attempt + 1))
+                if [ "$MAX_DOWNLOAD_RETRIES" -gt 0 ]; then
+                    echo " [1/3 DESCARGA] 📥 Descargando $chunks_to_download chunks faltantes con aria2c (Intento $attempt/$MAX_DOWNLOAD_RETRIES)..."
+                else
+                    echo " [1/3 DESCARGA] 📥 Descargando $chunks_to_download chunks faltantes con aria2c (Intento $attempt, reintentos continuos)..."
+                fi
 
                 aria2c \
                     --input-file="$aria2_input" \
@@ -603,7 +609,7 @@ main() {
                     --allow-overwrite=true \
                     --conditional-get=true \
                     --timeout=60 \
-                    --max-tries=5 \
+                    --max-tries=0 \
                     --retry-wait=3 \
                     --console-log-level=warn \
                     --summary-interval=10 || true
@@ -611,22 +617,25 @@ main() {
                 # Validar chunks brutos recién descargados
                 if validate_raw_chunks "$raw_dir" "$chunks_to_download"; then
                     download_ok=true
-                    echo " [VALIDACIÓN BRUTOS OK] ✅ Chunks brutos descargados íntegros."
+                    echo " [VALIDACIÓN BRUTOS OK] ✅ Chunks brutos descargados e íntegros."
                     break
                 else
-                    echo " [ADVERTENCIA] Falló la validación de chunks en el intento $attempt/$MAX_DOWNLOAD_RETRIES."
-                    if [ "$attempt" -lt "$MAX_DOWNLOAD_RETRIES" ]; then
-                        local backoff_sec=$((attempt * 10))
-                        echo " [REINTENTO] ⏳ Esperando $backoff_sec segundos antes de reintentar descarga..."
-                        sleep "$backoff_sec"
+                    echo " [ADVERTENCIA] Chunks aún incompletos o corruptos tras el intento $attempt."
+                    if [ "$MAX_DOWNLOAD_RETRIES" -gt 0 ] && [ "$attempt" -ge "$MAX_DOWNLOAD_RETRIES" ]; then
+                        echo " [ERROR] Se alcanzó el límite máximo de $MAX_DOWNLOAD_RETRIES intentos."
+                        break
                     fi
+                    local backoff_sec=$((attempt * 5))
+                    if [ "$backoff_sec" -gt 30 ]; then backoff_sec=30; fi
+                    echo " [REINTENTO] ⏳ Esperando $backoff_sec segundos antes del siguiente reintento de descarga..."
+                    sleep "$backoff_sec"
                 fi
             done
         fi
 
         if [ "$download_ok" = false ]; then
-            echo " [ERROR CRÍTICO] ❌ No se pudo completar la preparación de chunks para $model $exp $var tras $MAX_DOWNLOAD_RETRIES intentos."
-            echo -e "${model}\t${variant}\t${exp}\t${var}\tDescarga incompleta o corrupta tras $MAX_DOWNLOAD_RETRIES intentos\t$(date '+%Y-%m-%d %H:%M:%S')" >> "$FAILED_LOG"
+            echo " [ERROR CRÍTICO] ❌ No se pudo completar la preparación de chunks para $model $exp $var tras $attempt intentos."
+            echo -e "${model}\t${variant}\t${exp}\t${var}\tDescarga incompleta o corrupta tras $attempt intentos\t$(date '+%Y-%m-%d %H:%M:%S')" >> "$FAILED_LOG"
             continue
         fi
 
