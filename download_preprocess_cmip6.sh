@@ -623,8 +623,9 @@ main() {
                     --conditional-get=true \
                     --connect-timeout=15 \
                     --timeout=30 \
-                    --max-tries=0 \
+                    --max-tries=3 \
                     --retry-wait=2 \
+                    --uri-selector=adaptive \
                     --console-log-level=warn \
                     --summary-interval=10 || true
 
