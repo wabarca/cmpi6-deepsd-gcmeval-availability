@@ -256,9 +256,14 @@ def main():
     print(f"[OK] Catálogo CSV guardado: {args.output_csv} ({len(files_df):,} archivos)")
 
     # 5. Guardar Manifiesto TSV para el script Bash de descarga y procesamiento
+    if "replica_urls" not in files_df.columns and "https_url" in files_df.columns:
+        files_df["replica_urls"] = files_df["https_url"]
+    elif "replica_urls" in files_df.columns:
+        files_df["replica_urls"] = files_df["replica_urls"].fillna(files_df["https_url"])
+
     tsv_cols = [
         "source_id", "variant_label", "experiment_id", "variable_id",
-        "start_year", "end_year", "file_name", "https_url", "checksum",
+        "start_year", "end_year", "file_name", "https_url", "replica_urls", "checksum",
         "checksum_type", "file_size_mb", "data_node"
     ]
     avail_cols = [c for c in tsv_cols if c in files_df.columns]

@@ -443,7 +443,7 @@ def build_summary(df, experiments, variables, gcmeval_set=None):
 # ---------------------------------------------------------------------
 
 def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
-    """Parsea un documento Solr de tipo File y determina la mejor URL y método de acceso."""
+    """Parsea un documento Solr de tipo File y extrae todas las URLs de réplica y metadatos."""
     file_name = doc.get("title") or doc.get("instance_id")
     dataset_id = doc.get("dataset_id")
     instance_id = doc.get("instance_id")
@@ -458,9 +458,7 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
     checksum_type = first(checksum_type_raw) if checksum_type_raw else None
 
     urls = doc.get("url") or []
-    https_globus_url = None
-    https_thredds_url = None
-    http_thredds_url = None
+    extracted_urls = []
     globus_native_uri = None
 
     for entry in urls:
@@ -473,34 +471,23 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
 
             if "httpserver" in service_lower or service == "HTTPServer":
                 if "data.globus.org" in link:
-                    https_globus_url = link
+                    extracted_urls.append((35, link, "HTTPS (Globus)"))
                 elif link.startswith("https://"):
-                    https_thredds_url = link
-                elif link.startswith("http://") and not http_thredds_url:
-                    http_thredds_url = link
+                    node_boost = 5 if any(k in link for k in ("dkrz.de", "llnl.gov", "ceda.ac.uk", "ipsl.upmc.fr")) else 0
+                    extracted_urls.append((25 + node_boost, link, "HTTPS (THREDDS)"))
+                elif link.startswith("http://"):
+                    node_boost = 5 if any(k in link for k in ("dkrz.de", "llnl.gov", "ceda.ac.uk", "ipsl.upmc.fr")) else 0
+                    extracted_urls.append((15 + node_boost, link, "HTTP (THREDDS)"))
             elif "globus" in service_lower or link.startswith("globus:"):
                 globus_native_uri = link
 
-    if https_globus_url:
-        selected_url = https_globus_url
-        access_method = "HTTPS (Globus)"
-        priority_rank = 3
-    elif https_thredds_url:
-        selected_url = https_thredds_url
-        access_method = "HTTPS (THREDDS + Globus)" if globus_native_uri else "HTTPS (THREDDS)"
-        priority_rank = 2
-    elif http_thredds_url:
-        selected_url = http_thredds_url
-        access_method = "HTTP (THREDDS + Globus)" if globus_native_uri else "HTTP (THREDDS)"
-        priority_rank = 1
+    if extracted_urls:
+        extracted_urls.sort(key=lambda x: x[0], reverse=True)
+        best_rank, best_url, best_method = extracted_urls[0]
     elif globus_native_uri:
-        selected_url = globus_native_uri
-        access_method = "Globus Native"
-        priority_rank = 0
+        best_rank, best_url, best_method = 0, globus_native_uri, "Globus Native"
     else:
-        selected_url = None
-        access_method = "No URL"
-        priority_rank = -1
+        best_rank, best_url, best_method = -1, None, "No URL"
 
     return {
         "source_id": source_id,
@@ -508,8 +495,9 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
         "experiment_id": experiment_id,
         "variable_id": variable_id,
         "file_name": file_name,
-        "https_url": selected_url,
-        "access_method": access_method,
+        "https_url": best_url,
+        "candidate_urls": extracted_urls,
+        "access_method": best_method,
         "data_node": data_node,
         "file_size_bytes": file_size,
         "checksum": checksum,
@@ -517,13 +505,13 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
         "dataset_id": dataset_id,
         "instance_id": instance_id,
         "master_id": master_id,
-        "has_globus": bool(globus_native_uri or https_globus_url),
-        "priority_rank": priority_rank,
+        "has_globus": bool(globus_native_uri or ("HTTPS (Globus)" in [u[2] for u in extracted_urls])),
+        "priority_rank": best_rank,
     }
 
 
 def fetch_files_for_combination(source_id, variant_label, experiment_id, variable_id, session=None, period_ranges=None):
-    """Consulta archivos NetCDF para una combinación aplicando filtrado por período."""
+    """Consulta archivos NetCDF para una combinación agrupando y ordenando todas las réplicas disponibles."""
     http = session or requests
     offset = 0
     docs_all = []
@@ -568,22 +556,81 @@ def fetch_files_for_combination(source_id, variant_label, experiment_id, variabl
     if not docs_all:
         return [], True
 
-    best_file_by_name = {}
+    files_by_name = {}
     for doc in docs_all:
         parsed = parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id)
         fname = parsed["file_name"]
+        if not fname:
+            continue
 
-        if fname not in best_file_by_name:
-            best_file_by_name[fname] = parsed
+        if fname not in files_by_name:
+            all_urls_ranked = list(parsed.get("candidate_urls", []))
+            data_nodes = [parsed["data_node"]] if parsed.get("data_node") else []
+            files_by_name[fname] = {
+                "source_id": source_id,
+                "variant_label": variant_label,
+                "experiment_id": experiment_id,
+                "variable_id": variable_id,
+                "file_name": fname,
+                "https_url": parsed["https_url"],
+                "all_urls_ranked": all_urls_ranked,
+                "access_method": parsed["access_method"],
+                "data_node": parsed["data_node"],
+                "data_nodes": data_nodes,
+                "file_size_bytes": parsed["file_size_bytes"],
+                "checksum": parsed["checksum"],
+                "checksum_type": parsed["checksum_type"],
+                "dataset_id": parsed["dataset_id"],
+                "instance_id": parsed["instance_id"],
+                "master_id": parsed["master_id"],
+                "has_globus": parsed["has_globus"],
+                "priority_rank": parsed["priority_rank"],
+            }
         else:
-            if parsed["priority_rank"] > best_file_by_name[fname]["priority_rank"]:
-                best_file_by_name[fname] = parsed
+            rec = files_by_name[fname]
+            if parsed.get("data_node") and parsed["data_node"] not in rec["data_nodes"]:
+                rec["data_nodes"].append(parsed["data_node"])
+            for u in parsed.get("candidate_urls", []):
+                if u not in rec["all_urls_ranked"]:
+                    rec["all_urls_ranked"].append(u)
+            if parsed["priority_rank"] > rec["priority_rank"]:
+                rec["priority_rank"] = parsed["priority_rank"]
+                rec["access_method"] = parsed["access_method"]
+            if not rec["checksum"] and parsed["checksum"]:
+                rec["checksum"] = parsed["checksum"]
+                rec["checksum_type"] = parsed["checksum_type"]
+            if not rec["file_size_bytes"] and parsed["file_size_bytes"]:
+                rec["file_size_bytes"] = parsed["file_size_bytes"]
+
+    # Consolidar réplicas y ordenar URLs
+    consolidated_files = []
+    for fname, rec in files_by_name.items():
+        rec["all_urls_ranked"].sort(key=lambda x: x[0], reverse=True)
+        unique_urls = []
+        seen_links = set()
+        for _, link, _ in rec["all_urls_ranked"]:
+            if link and link not in seen_links and (link.startswith("http://") or link.startswith("https://")):
+                seen_links.add(link)
+                unique_urls.append(link)
+
+        if unique_urls:
+            rec["https_url"] = unique_urls[0]
+            rec["replica_urls"] = "|".join(unique_urls)
+        else:
+            rec["replica_urls"] = rec["https_url"] or ""
+
+        if rec["data_nodes"]:
+            rec["data_node"] = ", ".join(rec["data_nodes"])
+
+        rec.pop("all_urls_ranked", None)
+        rec.pop("data_nodes", None)
+        consolidated_files.append(rec)
 
     ranges = period_ranges if period_ranges is not None else DEFAULT_PERIOD_RANGES
     req_range = ranges.get(experiment_id)
 
     filtered_files = []
-    for f in best_file_by_name.values():
+    for f in consolidated_files:
         s_yr, e_yr = extract_file_years(f["file_name"])
         f["start_year"] = s_yr
         f["end_year"] = e_yr
@@ -749,6 +796,11 @@ def build_files_inventory(selected_df, experiments=DEFAULT_EXPERIMENTS, variable
     if filtered_records:
         files_df = pd.DataFrame(filtered_records)
 
+        if "replica_urls" not in files_df.columns:
+            files_df["replica_urls"] = files_df["https_url"]
+        else:
+            files_df["replica_urls"] = files_df["replica_urls"].fillna(files_df["https_url"])
+
         if "file_size_bytes" in files_df.columns:
             files_df["file_size_mb"] = (
                 files_df["file_size_bytes"].fillna(0) / (1024.0 * 1024.0)
@@ -761,7 +813,7 @@ def build_files_inventory(selected_df, experiments=DEFAULT_EXPERIMENTS, variable
         column_order = [
             "source_id", "variant_label", "experiment_id", "variable_id",
             "start_year", "end_year", "file_name", "file_link", "https_url",
-            "access_method", "data_node", "file_size_mb", "file_size_bytes",
+            "replica_urls", "access_method", "data_node", "file_size_mb", "file_size_bytes",
             "checksum", "checksum_type", "dataset_id", "instance_id", "master_id",
         ]
         existing_cols = [c for c in column_order if c in files_df.columns]

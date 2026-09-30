@@ -534,12 +534,24 @@ main() {
         mkdir -p "$raw_dir"
         mkdir -p "$clipped_dir"
 
-        # Obtener lista completa de chunks esperados del manifiesto
-        mapfile -t CHUNK_LINES < <(tail -n +2 "$MANIFEST" | tr -d '\r' | awk -F'\t' -v m="$model" -v v="$variant" -v e="$exp" -v va="$var" '
-            $1 == m && $2 == v && $3 == e && $4 == va {
-                print $7"\t"$8"\t"$9"\t"$10"\t"$11
+        # Obtener lista completa de chunks esperados del manifiesto (compatible con replica_urls dinámico)
+        mapfile -t CHUNK_LINES < <(awk -F'\t' -v m="$model" -v v="$variant" -v e="$exp" -v va="$var" '
+            NR==1 {
+                for (i=1; i<=NF; i++) {
+                    gsub(/\r/, "", $i)
+                    h[$i] = i
+                }
+                next
             }
-        ')
+            {
+                gsub(/\r/, "")
+                if ($h["source_id"] == m && $h["variant_label"] == v && $h["experiment_id"] == e && $h["variable_id"] == va) {
+                    rep = (h["replica_urls"] ? $h["replica_urls"] : $h["https_url"])
+                    if (rep == "" || rep == "None") rep = $h["https_url"]
+                    print $h["file_name"]"\t"rep"\t"$h["checksum"]"\t"$h["checksum_type"]"\t"$h["file_size_mb"]
+                }
+            }
+        ' "$MANIFEST")
 
         total_chunks=${#CHUNK_LINES[@]}
         if [ "$total_chunks" -eq 0 ]; then
@@ -553,9 +565,9 @@ main() {
         > "$aria2_input"
 
         for chk_line in "${CHUNK_LINES[@]}"; do
-            IFS=$'\t' read -r fname url chk chk_type sz <<< "$chk_line"
+            IFS=$'\t' read -r fname url_replicas chk chk_type sz <<< "$chk_line"
             fname=$(echo "$fname" | tr -d '\r')
-            url=$(echo "$url" | tr -d '\r')
+            url_replicas=$(echo "$url_replicas" | tr -d '\r')
             chk=$(echo "$chk" | tr -d '\r')
             chk_type=$(echo "$chk_type" | tr -d '\r')
 
@@ -573,8 +585,9 @@ main() {
                 continue
             fi
 
-            # Caso 3: Falta o está incompleto -> agregar a aria2c
-            echo "$url" >> "$aria2_input"
+            # Caso 3: Falta o está incompleto -> agregar a aria2c con soporte multi-URI (réplicas separadas por tab)
+            aria2_uris=$(echo "$url_replicas" | tr '|' '\t')
+            printf "%b\n" "$aria2_uris" >> "$aria2_input"
             echo "  dir=$raw_dir" >> "$aria2_input"
             echo "  out=$fname" >> "$aria2_input"
             if [ -n "$chk" ] && [ "$chk" != "None" ] && [ "$chk_type" == "SHA256" ]; then
@@ -608,9 +621,10 @@ main() {
                     --auto-file-renaming=false \
                     --allow-overwrite=true \
                     --conditional-get=true \
-                    --timeout=60 \
+                    --connect-timeout=15 \
+                    --timeout=30 \
                     --max-tries=0 \
-                    --retry-wait=3 \
+                    --retry-wait=2 \
                     --console-log-level=warn \
                     --summary-interval=10 || true
 
