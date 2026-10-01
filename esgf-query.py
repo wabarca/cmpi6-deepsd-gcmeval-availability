@@ -951,9 +951,12 @@ def export_results(df, summary, selected, files_df, variables=DEFAULT_VARIABLES,
             selected_export[["model"]].to_csv(gcmeval_target, index=False, header=False)
             print(f"[OK] Copia guardada en subdirectorio gcmeval: {gcmeval_target}")
 
-        # Guardar también en selected_models.csv para uso directo en generate_manifest.py
-        selected_export[["model"]].to_csv(csv_selected_models, index=False, header=False)
-        print(f"[OK] Lista para generador de manifiestos guardada: {csv_selected_models}")
+        # Guardar en selected_models.csv solo si no existe aún (para no sobrescribir el ranking de run_evaluation.py)
+        if not os.path.exists(csv_selected_models):
+            selected_export[["model"]].to_csv(csv_selected_models, index=False, header=False)
+            print(f"[OK] Lista base para generador de manifiestos guardada: {csv_selected_models}")
+        else:
+            print(f"[INFO] Se conserva '{csv_selected_models}' (generado por la evaluación GCMEval).")
 
     if not OPENPYXL_AVAILABLE:
         print("[AVISO] openpyxl no está instalado; se exportará Excel básico sin formato.")
