@@ -47,10 +47,17 @@ except ImportError:
     OPENPYXL_AVAILABLE = False
 
 # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # Configuración general por defecto
 # ---------------------------------------------------------------------
 
 BASE_URL = "https://metagrid.esgf-west.org/proxy/search"
+SEARCH_ENDPOINTS = [
+    "https://metagrid.esgf-west.org/proxy/search",
+    "https://esgf-data.dkrz.de/esg-search/search",
+    "https://esgf.ceda.ac.uk/esg-search/search",
+    "https://esgf-node.llnl.gov/esg-search/search",
+]
 CACHE_FILE_DATASETS = "esgf_raw_datasets.json"
 CACHE_FILE_FILES = "esgf_raw_files.json"
 
@@ -253,7 +260,6 @@ def fetch_variable_experiment(variable, experiment, session=None):
             "experiment_id": experiment,
             "variable_id": variable,
             "latest": "true",
-            "replica": "false",
             "type": "Dataset",
             "format": "application/solr+json",
             "limit": PAGE_SIZE,
@@ -448,7 +454,7 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
     dataset_id = doc.get("dataset_id")
     instance_id = doc.get("instance_id")
     master_id = doc.get("master_id")
-    data_node = doc.get("data_node")
+    data_node = doc.get("data_node") or ""
     file_size = doc.get("size")
 
     checksum_raw = doc.get("checksum")
@@ -470,14 +476,19 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
             service_lower = service.lower()
 
             if "httpserver" in service_lower or service == "HTTPServer":
+                # Ponderar la disponibilidad y velocidad de los nodos
+                score = 20
                 if "data.globus.org" in link:
-                    extracted_urls.append((35, link, "HTTPS (Globus)"))
+                    score = 45  # Enlace directo Globus HTTPS
+                elif any(k in link for k in ("ceda.ac.uk", "dkrz.de", "llnl.gov", "ornl.gov", "anl.gov", "ipsl.upmc.fr", "nci.org.au")):
+                    score = 35 if link.startswith("https://") else 30
+                elif "diasjp.net" in link:
+                    score = 5   # Penalizar nodo DIAS JP conocido por errores 404/caídas
                 elif link.startswith("https://"):
-                    node_boost = 5 if any(k in link for k in ("dkrz.de", "llnl.gov", "ceda.ac.uk", "ipsl.upmc.fr")) else 0
-                    extracted_urls.append((25 + node_boost, link, "HTTPS (THREDDS)"))
-                elif link.startswith("http://"):
-                    node_boost = 5 if any(k in link for k in ("dkrz.de", "llnl.gov", "ceda.ac.uk", "ipsl.upmc.fr")) else 0
-                    extracted_urls.append((15 + node_boost, link, "HTTP (THREDDS)"))
+                    score = 25
+
+                method_label = "HTTPS (Globus)" if "data.globus.org" in link else ("HTTPS (THREDDS)" if link.startswith("https://") else "HTTP (THREDDS)")
+                extracted_urls.append((score, link, method_label))
             elif "globus" in service_lower or link.startswith("globus:"):
                 globus_native_uri = link
 
@@ -511,12 +522,12 @@ def parse_file_doc(doc, source_id, variant_label, experiment_id, variable_id):
 
 
 def fetch_files_for_combination(source_id, variant_label, experiment_id, variable_id, session=None, period_ranges=None):
-    """Consulta archivos NetCDF para una combinación agrupando y ordenando todas las réplicas disponibles."""
+    """Consulta archivos NetCDF federando consultas a MetaGrid, DKRZ, CEDA y LLNL para recolectar todas las réplicas."""
     http = session or requests
-    offset = 0
     docs_all = []
+    seen_doc_ids = set()
 
-    params = {
+    params_base = {
         "project": "CMIP6",
         "source_id": source_id,
         "variant_label": variant_label,
@@ -527,31 +538,33 @@ def fetch_files_for_combination(source_id, variant_label, experiment_id, variabl
         "type": "File",
         "format": "application/solr+json",
         "limit": FILES_PAGE_SIZE,
-        "offset": offset,
     }
 
-    try:
-        while True:
-            params["offset"] = offset
-            r = http.get(BASE_URL, params=params, timeout=60)
-            r.raise_for_status()
-            data = r.json()
+    for endpoint in SEARCH_ENDPOINTS:
+        offset = 0
+        try:
+            while True:
+                params = dict(params_base)
+                params["offset"] = offset
+                r = http.get(endpoint, params=params, timeout=20)
+                if r.status_code != 200:
+                    break
+                data = r.json()
+                docs = data.get("response", {}).get("docs", [])
+                if not docs:
+                    break
 
-            response = data.get("response", {})
-            docs = response.get("docs", [])
+                for d in docs:
+                    doc_key = (d.get("id") or d.get("instance_id") or "") + "_" + (d.get("data_node") or "")
+                    if doc_key not in seen_doc_ids:
+                        seen_doc_ids.add(doc_key)
+                        docs_all.append(d)
 
-            if not docs:
-                break
-
-            docs_all.extend(docs)
-            offset += len(docs)
-
-            if len(docs) < FILES_PAGE_SIZE:
-                break
-
-    except Exception as e:
-        print(f"[ERROR] Fallo al consultar archivos para {source_id} {variant_label} {experiment_id} {variable_id}: {e}")
-        return [], False
+                offset += len(docs)
+                if len(docs) < FILES_PAGE_SIZE:
+                    break
+        except Exception:
+            continue
 
     if not docs_all:
         return [], True
