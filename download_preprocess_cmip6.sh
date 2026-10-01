@@ -255,65 +255,42 @@ transfer_and_cleanup() {
 # Validación de Integridad de Chunks NetCDF (Raw y Clipped)
 # ------------------------------------------------------------------------------
 
-validate_raw_chunks() {
+validate_dataset_chunks() {
     local raw_dir="$1"
-    local expected_count="$2"
+    local clipped_dir="$2"
+    shift 2
+    local chunk_lines=("$@")
 
-    if [ "$expected_count" -le 0 ]; then
+    if [ ${#chunk_lines[@]} -eq 0 ]; then
         return 0
     fi
 
-    local actual_files=("$raw_dir"/*.nc)
-    if [ ! -e "${actual_files[0]}" ]; then
-        return 1
-    fi
-    local actual_count=${#actual_files[@]}
-    if [ "$actual_count" -ne "$expected_count" ]; then
-        echo " [VALIDACIÓN ERROR] Se esperaban $expected_count chunks brutos, pero solo hay $actual_count en $raw_dir."
-        return 1
-    fi
+    for chk_line in "${chunk_lines[@]}"; do
+        IFS=$'\t' read -r fname url_replicas chk chk_type sz <<< "$chk_line"
+        fname=$(echo "$fname" | tr -d '\r')
+        local c_file="${clipped_dir}/${fname%.*}_clipped.nc"
+        local r_file="${raw_dir}/${fname}"
 
-    for r_file in "${actual_files[@]}"; do
-        local f_sz
-        f_sz=$(wc -c < "$r_file" 2>/dev/null || echo 0)
-        if [ "$f_sz" -lt 1024 ]; then
-            echo " [VALIDACIÓN ERROR] Archivo bruto incompleto o vacío ($(basename "$r_file")): $f_sz bytes."
-            return 1
+        # 1. ¿Está en clipped y es válido?
+        if [ -f "$c_file" ]; then
+            local f_sz
+            f_sz=$(wc -c < "$c_file" 2>/dev/null || echo 0)
+            if [ "$f_sz" -ge 1024 ] && cdo -s sinfo "$c_file" &>/dev/null; then
+                continue
+            fi
         fi
-        if ! cdo -s sinfo "$r_file" &>/dev/null; then
-            echo " [VALIDACIÓN ERROR] Estructura NetCDF no válida o corrupta en archivo bruto $(basename "$r_file")."
-            return 1
+
+        # 2. ¿Está en raw y es válido?
+        if [ -f "$r_file" ]; then
+            local f_sz
+            f_sz=$(wc -c < "$r_file" 2>/dev/null || echo 0)
+            if [ "$f_sz" -ge 1024 ] && cdo -s sinfo "$r_file" &>/dev/null; then
+                continue
+            fi
         fi
-    done
-    return 0
-}
 
-validate_clipped_chunks() {
-    local clipped_dir="$1"
-    local expected_count="$2"
-
-    if [ "$expected_count" -le 0 ]; then
+        echo " [VALIDACIÓN ERROR] Falta o está incompleto/corrupto el chunk: $fname"
         return 1
-    fi
-
-    local actual_files=("$clipped_dir"/*.nc)
-    if [ ! -e "${actual_files[0]}" ]; then
-        return 1
-    fi
-    local actual_count=${#actual_files[@]}
-    if [ "$actual_count" -ne "$expected_count" ]; then
-        return 1
-    fi
-
-    for c_file in "${actual_files[@]}"; do
-        local f_sz
-        f_sz=$(wc -c < "$c_file" 2>/dev/null || echo 0)
-        if [ "$f_sz" -lt 1024 ]; then
-            return 1
-        fi
-        if ! cdo -s sinfo "$c_file" &>/dev/null; then
-            return 1
-        fi
     done
     return 0
 }
@@ -629,10 +606,10 @@ main() {
                     --console-log-level=warn \
                     --summary-interval=10 || true
 
-                # Validar chunks brutos recién descargados
-                if validate_raw_chunks "$raw_dir" "$chunks_to_download"; then
+                # Validar que todos los chunks del dataset estén presentes e íntegros (raw o clipped)
+                if validate_dataset_chunks "$raw_dir" "$clipped_dir" "${CHUNK_LINES[@]}"; then
                     download_ok=true
-                    echo " [VALIDACIÓN BRUTOS OK] ✅ Chunks brutos descargados e íntegros."
+                    echo " [VALIDACIÓN BRUTOS OK] ✅ Chunks del dataset descargados e íntegros ($total_chunks/$total_chunks)."
                     break
                 else
                     echo " [ADVERTENCIA] Chunks aún incompletos o corruptos tras el intento $attempt."
