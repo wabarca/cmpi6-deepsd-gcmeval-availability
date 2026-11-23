@@ -440,7 +440,19 @@ MAX_DOWNLOAD_LIMIT=0 \
 
 ---
 
-## 🔑 Configuración de Transferencia Remota (SSH sin contraseña)
+## 🔑 Configuración de Transferencia Remota (`.env` y SSH sin contraseña)
+
+1. **Configurar el archivo local de secretos (`.env`)**:
+   Copia la plantilla [`.env.example`](.env.example) como `.env` (este archivo está ignorado en `.gitignore` y nunca se sincroniza con Git) y completa tus datos:
+   ```bash
+   cp .env.example .env
+   ```
+   ```ini
+   ENABLE_REMOTE_SYNC=true
+   REMOTE_HOST=<IP_SERVIDOR>
+   REMOTE_USER=<USUARIO>
+   REMOTE_DEST_DIR=/ruta/CMIP6_GCMs_Processed
+   ```
 
 Para que el script pueda transferir automáticamente los archivos a la PC de almacenamiento remoto (`<IP_SERVIDOR>`) con el usuario correspondiente (`<USUARIO>`) sin pedir contraseña en cada variable:
 

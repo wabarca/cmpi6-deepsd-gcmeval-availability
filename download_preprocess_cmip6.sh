@@ -16,7 +16,7 @@
 #      - Detecta y utiliza automáticamente todos los núcleos disponibles ($(nproc)).
 #   3. Transferencia Remota Automática a PC de Almacenamiento (SSH / rsync):
 #      - Al finalizar el procesamiento CDO de cada archivo, se envía vía rsync/scp
-#        a la PC de almacenamiento (192.168.4.27) en E:\CMIP6\CMIP6_GCMs_Processed.
+#        a la PC de almacenamiento remoto configurada en .env (REMOTE_HOST / REMOTE_DEST_DIR).
 #      - Recrea la estructura de carpetas por modelo en el destino remoto.
 #      - Tras verificar la transferencia, elimina inmediatamente los archivos
 #        locales (raw y procesados) para mantener el disco de la PC de descarga limpio.
@@ -34,6 +34,18 @@
 # ==============================================================================
 
 set -euo pipefail
+
+# Cargar variables privadas locales desde .env (no sincronizado con Git)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for env_candidate in ".env" "${SCRIPT_DIR}/.env"; do
+    if [ -f "$env_candidate" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$env_candidate"
+        set +a
+        break
+    fi
+done
 
 # ------------------------------------------------------------------------------
 # 1. Configuración General y Parámetros
@@ -59,13 +71,19 @@ TEMP_DIR="${TEMP_DIR:-./tmp_cmip6_pipeline}"
 LOCAL_OUTPUT_DIR="${LOCAL_OUTPUT_DIR:-./CMIP6_GCMs_Processed}"
 
 # ------------------------------------------------------------------------------
-# Configuración Remota (PC de Almacenamiento con más espacio)
+# Configuración Remota (definida en .env o variables de entorno)
 # ------------------------------------------------------------------------------
 ENABLE_REMOTE_SYNC="${ENABLE_REMOTE_SYNC:-true}"
-REMOTE_HOST="${REMOTE_HOST:-192.168.4.27}"
-REMOTE_USER="${REMOTE_USER:-AMBIENTE\\wabarca}" # Dejar vacío si el usuario SSH coincide o está en ~/.ssh/config
-REMOTE_DEST_DIR="${REMOTE_DEST_DIR:-E:/CMIP6/CMIP6_GCMs_Processed}"
+REMOTE_HOST="${REMOTE_HOST:-}"
+REMOTE_USER="${REMOTE_USER:-}" # Dejar vacío si el usuario SSH coincide o está en ~/.ssh/config
+REMOTE_DEST_DIR="${REMOTE_DEST_DIR:-}"
 REMOTE_SSH_PORT="${REMOTE_SSH_PORT:-22}"
+
+if [ "$ENABLE_REMOTE_SYNC" == "true" ] && { [ -z "$REMOTE_HOST" ] || [ -z "$REMOTE_DEST_DIR" ]; }; then
+    echo "[ERROR] Sincronización remota activada, pero faltan REMOTE_HOST o REMOTE_DEST_DIR."
+    echo "Copia '.env.example' a '.env' y completa tus credenciales/host locales, o desactiva con ENABLE_REMOTE_SYNC=false."
+    exit 1
+fi
 
 # Eliminar archivo local procesado tras confirmarse la transferencia remota
 CLEANUP_LOCAL_AFTER_SYNC="${CLEANUP_LOCAL_AFTER_SYNC:-true}"

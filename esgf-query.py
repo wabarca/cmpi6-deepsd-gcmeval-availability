@@ -21,7 +21,7 @@ Flujo:
    - selected_models.csv (Modelos listos para generate_manifest.py)
    - cmip6_files.csv (Catálogo detallado de archivos NetCDF)
 
-Autor original: Will Abarca (wabarca@ambiente.gob.sv)
+Autor original: Will Abarca
 """
 
 import os
