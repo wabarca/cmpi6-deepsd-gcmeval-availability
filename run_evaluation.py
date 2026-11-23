@@ -35,21 +35,70 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-# Catálogo de regiones SREX y dominios disponibles en GCMEval
+# Catálogo completo de regiones SREX y dominios preestablecidos en GCMEval (gcmeval/front-end/global.R)
 AVAILABLE_REGIONS = [
     "Central America/Mexico [CAM:6]",
     "small islands regions Caribbean",
+    "Global",
+    "Alaska/N.W. Canada [ALA:1]",
     "Amazon [AMZ:7]",
-    "West Coast South America [WSA:9]",
-    "Southeastern South America [SSA:10]",
-    "North-East Brazil [NEB:8]",
+    "Central Asia [CAS:20]",
+    "Central Europe [CEU:12]",
+    "Canada/Greenland/Iceland [CGI:2]",
     "Central North America [CNA:4]",
+    "East Africa [EAF:16]",
+    "East Asia [EAS:22]",
     "East North America [ENA:5]",
-    "Global"
+    "South Europe/Mediterranean [MED:13]",
+    "North Asia [NAS:18]",
+    "North Australia [NAU:25]",
+    "North-East Brazil [NEB:8]",
+    "North Europe [NEU:11]",
+    "Southern Africa [SAF:17]",
+    "Sahara [SAH:14]",
+    "South Asia [SAS:23]",
+    "South Australia/New Zealand [SAU:26]",
+    "Southeast Asia [SEA:24]",
+    "Southeastern South America [SSA:10]",
+    "Tibetan Plateau [TIB:21]",
+    "West Africa [WAF:15]",
+    "West Asia [WAS:19]",
+    "West North America [WNA:3]",
+    "West Coast South America [WSA:9]",
+    "Antarctica",
+    "Arctic",
+    "Pacific Islands region[2]",
+    "Southern Topical Pacific",
+    "Pacific Islands region[3]",
+    "West Indian Ocean",
 ]
 
 AVAILABLE_OBS_TEMP = ["ERA5", "NCEP", "CRU"]
 AVAILABLE_OBS_PREC = ["GPCP", "CHIRPS", "MSWEP"]
+
+
+def resolve_region_name(query):
+    """Resuelve un nombre, código SREX (ej. CAM, CAM:6) o subcadena a una región válida de GCMEval."""
+    q = (query or "").strip()
+    if not q:
+        return None
+    q_low = q.lower()
+    for reg in AVAILABLE_REGIONS:
+        if reg.lower() == q_low:
+            return reg
+    # Coincidencia por código entre corchetes, ej. [CAM:6] o CAM
+    for reg in AVAILABLE_REGIONS:
+        if f"[{q_low}]" in reg.lower() or f"[{q_low}:" in reg.lower():
+            return reg
+    # Coincidencia parcial única
+    matches = [reg for reg in AVAILABLE_REGIONS if q_low in reg.lower()]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"Región ambigua '{query}'. Coincidencias: {', '.join(matches)}")
+    raise ValueError(
+        f"Región desconocida '{query}'. Usa '--list-regions' para ver las {len(AVAILABLE_REGIONS)} regiones válidas."
+    )
 
 
 def get_default_config():
@@ -68,7 +117,7 @@ def get_default_config():
             "secondary": {
                 "enabled": False,
                 "name": "small islands regions Caribbean",
-                "weight": 0.3
+                "weight": 0.0
             }
         },
         "metrics_weights": {
@@ -143,7 +192,7 @@ def print_config_summary(config):
     reg_s = regs.get("secondary", {})
     s_enabled = bool(reg_s.get("enabled", False))
     s_name = reg_s.get("name", "Desactivada")
-    s_weight = float(reg_s.get("weight", 0.3)) if s_enabled else 0.0
+    s_weight = float(reg_s.get("weight", 0.0)) if s_enabled else 0.0
 
     total_w = p_weight + s_weight
     p_pct = (p_weight / total_w) * 100 if total_w > 0 else 100
@@ -164,10 +213,12 @@ def print_config_summary(config):
     print(f" [1] Escenario / Forzamiento : {scen} (Período base historical 1981-2014)")
     print(f" [2] Observaciones de Ref.   : Temp: {obs_t} | Prec: {obs_p}")
     print(f" [3] Región Primaria         : {p_name} ({p_pct:.1f}% del peso)")
-    if s_enabled:
+    if s_enabled and s_weight > 0:
         print(f" [4] Región Secundaria       : {s_name} ({s_pct:.1f}% del peso) [ACTIVADA]")
+    elif s_enabled:
+        print(f" [4] Región Secundaria       : {s_name} (Peso 0.0 - no considerada)")
     else:
-        print(f" [4] Región Secundaria       : Desactivada (Solo región primaria)")
+        print(f" [4] Región Secundaria       : Desactivada (Peso 0.0 - solo región primaria)")
     print(f" [5] Ponderación de Métricas : Bias={w_bias:.1f} | Desv.Est={w_sd:.1f} | Corr={w_corr:.1f} | RMSE={w_rmse:.1f}")
     print(f" [6] Experimentos Activos    : {n_exp} Experimentos configurados:")
     for e_id, e_val in exps.items():
@@ -208,15 +259,19 @@ def interactive_config_wizard(config, config_path):
         if ans_reg_s.isdigit() and 1 <= int(ans_reg_s) <= len(AVAILABLE_REGIONS):
             config["regions"]["secondary"]["name"] = AVAILABLE_REGIONS[int(ans_reg_s) - 1]
         
-        curr_w_s = config["regions"]["secondary"].get("weight", 0.3)
-        ans_w_s = input(f"Peso relativo del dominio secundario (0.1 a 1.0) [{curr_w_s}]: ").strip()
+        curr_w_s = config["regions"]["secondary"].get("weight", 0.0)
+        ans_w_s = input(f"Peso relativo del dominio secundario (0.0 a 1.0; 0 = desactivado) [{curr_w_s}]: ").strip()
         try:
             if ans_w_s:
-                config["regions"]["secondary"]["weight"] = float(ans_w_s)
+                w_val = float(ans_w_s)
+                config["regions"]["secondary"]["weight"] = w_val
+                if w_val <= 0:
+                    config["regions"]["secondary"]["enabled"] = False
         except ValueError:
             pass
     elif ans_s in ("n", "no"):
         config["regions"]["secondary"]["enabled"] = False
+        config["regions"]["secondary"]["weight"] = 0.0
 
     # 3. Observaciones
     print(f"\n3. CONJUNTOS OBSERVACIONALES DE REFERENCIA:")
@@ -586,7 +641,13 @@ def run_evaluation(rscript_exe, script_path, models_csv=None, output_dir=None, c
     print("\n" + "=" * 75)
     print("EVALUACIÓN Y RANKING COMPLETADOS CON ÉXITO")
     print("=" * 75)
-    
+
+    try:
+        import results_reporter
+        results_reporter.update_step2_report(repo_root, config=config)
+    except Exception as e:
+        print(f"[AVISO] No se pudo actualizar el reporte Markdown de la Etapa 2: {e}")
+
     results_dir = repo_root / "results"
     if results_dir.exists():
         print(f"\nArtefactos generados en '{results_dir}':")
@@ -646,11 +707,75 @@ def main():
         action="store_true",
         help="Instala automáticamente las librerías de R faltantes antes de ejecutar"
     )
+    parser.add_argument(
+        "--list-regions",
+        action="store_true",
+        help="Muestra el catálogo completo de regiones preestablecidas en GCMEval y sale"
+    )
+    parser.add_argument(
+        "--region",
+        default=None,
+        help="Región primaria de evaluación (nombre o código SREX, ej. 'CAM' o 'Amazon [AMZ:7]')"
+    )
+    parser.add_argument(
+        "--primary-weight",
+        type=float,
+        default=None,
+        help="Peso de la región primaria (por defecto: 1.0)"
+    )
+    parser.add_argument(
+        "--secondary-region",
+        default=None,
+        help="Región secundaria opcional (nombre o código SREX, ej. 'small islands regions Caribbean')"
+    )
+    parser.add_argument(
+        "--secondary-weight",
+        type=float,
+        default=None,
+        help="Peso de la región secundaria (por defecto: 0.0 = desactivada)"
+    )
+    parser.add_argument(
+        "--no-secondary",
+        action="store_true",
+        help="Desactiva explícitamente la región secundaria (peso 0.0)"
+    )
 
     args = parser.parse_args()
 
+    if args.list_regions:
+        print("Regiones preestablecidas disponibles en GCMEval:")
+        for idx, reg in enumerate(AVAILABLE_REGIONS, 1):
+            default_mark = "  [POR DEFECTO]" if reg == "Central America/Mexico [CAM:6]" else ""
+            print(f"  {idx:2d}. {reg}{default_mark}")
+        sys.exit(0)
+
     # 1. Cargar o crear configuración de evaluación
     config = load_or_create_config(args.config)
+
+    # Aplicar overrides de región por CLI (sin sobrescribir el YAML en disco)
+    try:
+        if args.region:
+            config.setdefault("regions", {}).setdefault("primary", {})["name"] = resolve_region_name(args.region)
+        if args.primary_weight is not None:
+            config.setdefault("regions", {}).setdefault("primary", {})["weight"] = float(args.primary_weight)
+        if args.no_secondary:
+            sec = config.setdefault("regions", {}).setdefault("secondary", {})
+            sec["enabled"] = False
+            sec["weight"] = 0.0
+        else:
+            if args.secondary_region:
+                sec = config.setdefault("regions", {}).setdefault("secondary", {})
+                sec["name"] = resolve_region_name(args.secondary_region)
+                sec["enabled"] = True
+                if args.secondary_weight is None and float(sec.get("weight", 0.0)) <= 0.0:
+                    sec["weight"] = 0.3
+            if args.secondary_weight is not None:
+                sec = config.setdefault("regions", {}).setdefault("secondary", {})
+                sec["weight"] = float(args.secondary_weight)
+                sec["enabled"] = float(args.secondary_weight) > 0.0
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        sys.exit(1)
 
     # 2. Manejo de asistente interactivo o confirmación por consola
     if args.wizard:

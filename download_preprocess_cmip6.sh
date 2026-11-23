@@ -673,20 +673,36 @@ main() {
     echo " Total combinaciones evaluadas : $total_combos"
     echo " Procesadas en esta sesión     : $processed_count"
     echo " Omitidas (ya existentes)      : $skipped_count"
+    local failed_count=0
     if [ -f "$FAILED_LOG" ] && [ -s "$FAILED_LOG" ]; then
-        local failed_count
         failed_count=$(wc -l < "$FAILED_LOG")
         echo " Combinaciones con fallos      : $failed_count (Registradas en $FAILED_LOG)"
     else
         echo " Combinaciones con fallos      : 0 (100% de éxito)"
     fi
+    local final_dest="$LOCAL_OUTPUT_DIR"
     if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
-        echo " Almacenamiento final remoto   : ${SSH_TARGET}:${REMOTE_DEST_DIR}"
+        final_dest="${SSH_TARGET}:${REMOTE_DEST_DIR}"
+        echo " Almacenamiento final remoto   : $final_dest"
     else
-        echo " Almacenamiento final local    : $LOCAL_OUTPUT_DIR"
+        echo " Almacenamiento final local    : $final_dest"
     fi
     echo "======================================================================"
     echo ""
+
+    if command -v python3 &>/dev/null && [ -f "results_reporter.py" ]; then
+        python3 results_reporter.py \
+            --step 4 \
+            --total "$total_combos" \
+            --processed "$processed_count" \
+            --skipped "$skipped_count" \
+            --failed "$failed_count" \
+            --lon-box "${LON_LEFT} a ${LON_RIGHT}" \
+            --lat-box "${LAT_DOWN} a ${LAT_UP}" \
+            --hist-period "${HISTORICAL_START_YEAR} a ${HISTORICAL_END_YEAR}" \
+            --ssp-period "${SSP_START_YEAR} a ${SSP_END_YEAR}" \
+            --dest "$final_dest" || true
+    fi
 }
 
 main "$@"

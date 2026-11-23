@@ -278,6 +278,18 @@ def main():
                 f.write(f"{url}\n")
     print(f"[OK] Lista de URLs guardada: {args.output_urls}")
 
+    try:
+        import results_reporter
+        results_reporter.update_step3_report(
+            ".",
+            manifest_path=args.output_tsv,
+            input_csv=args.input_csv,
+            period_ranges=period_ranges,
+        )
+        print("[OK] Reporte Markdown Etapa 3 actualizado en: results/etapas/etapa3_manifiesto_descarga.md")
+    except Exception as e:
+        print(f"[AVISO] No se pudo actualizar el reporte Markdown de la Etapa 3: {e}")
+
     print()
     print("=" * 70)
     print("MANIFIESTO GENERADO EXITOSAMENTE")

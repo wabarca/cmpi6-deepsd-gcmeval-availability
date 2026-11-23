@@ -41,6 +41,21 @@ source(file.path(gcmeval_dir, "front-end", "global.R"))
 # Helper para valores por defecto (seguro para escalares y vectores)
 `%||%` <- function(a, b) if (!is.null(a) && length(a) > 0) a else b
 
+# Resolver clave interna de statistics.rda a partir del nombre de región GCMEval
+resolve_region_key <- function(reg_name) {
+  if (tolower(reg_name) == "global") return("global")
+  idx <- which(srex$name == reg_name)
+  if (length(idx) > 0) return(as.character(srex$label[idx[1]]))
+  return(reg_name)
+}
+
+sanitize_reg_tag <- function(reg_key) {
+  tag <- gsub("[^A-Za-z0-9]+", "_", reg_key)
+  tag <- gsub("^_+|_+$", "", tag)
+  if (tolower(tag) == "global") return("GLOBAL")
+  return(tag)
+}
+
 # 3. Leer lista de modelos seleccionados de ESGF MetaGrid
 target_models_raw <- readLines(models_csv)
 target_models_raw <- trimws(target_models_raw)
@@ -83,14 +98,15 @@ if (!is.null(config_path) && file.exists(config_path)) {
     if (!is.null(cfg$observations$temperature)) ref_tas <- cfg$observations$temperature
     if (!is.null(cfg$observations$precipitation)) ref_pr <- cfg$observations$precipitation
     
-    # Cargar regiones y ponderación espacial
+    # Cargar regiones y ponderación espacial (solo incluir secundaria si enabled=TRUE y weight > 0)
     if (!is.null(cfg$regions$primary$name)) {
       reg_list <- list(cfg$regions$primary$name)
       w_list <- c(as.numeric(cfg$regions$primary$weight %||% 1.0))
       
-      if (isTRUE(cfg$regions$secondary$enabled) && !is.null(cfg$regions$secondary$name) && cfg$regions$secondary$name != "") {
+      sec_w <- as.numeric(cfg$regions$secondary$weight %||% 0.0)
+      if (isTRUE(cfg$regions$secondary$enabled) && !is.null(cfg$regions$secondary$name) && cfg$regions$secondary$name != "" && sec_w > 0) {
         reg_list <- c(reg_list, list(cfg$regions$secondary$name))
-        w_list <- c(w_list, as.numeric(cfg$regions$secondary$weight %||% 0.3))
+        w_list <- c(w_list, sec_w)
       }
       
       # Normalizar pesos regionales
@@ -352,11 +368,15 @@ stage3_csv <- file.path(results_dir, "analysis_stage3_families.csv")
 write.csv(stage3, stage3_csv, row.names = FALSE)
 cat(sprintf("[OK] Etapa 3 (Ranking consolidado de 16 familias) guardado: %s\n", stage3_csv))
 
-# 11. CÁLCULO DE LA SEÑAL DE CAMBIO CLIMÁTICO Y SPREAD FUTURO (SSP5-8.5, 2071-2100 vs 1981-2010)
-cat("\n--- CALCULANDO SEÑAL DE CAMBIO CLIMÁTICO Y SPREAD FUTURO (CAM:6) ---\n")
+reg_keys <- sapply(unlist(regiones), resolve_region_key, USE.NAMES = FALSE)
+reg_tag  <- paste(sapply(reg_keys, sanitize_reg_tag), collapse = "_")
+reg_title <- paste(unlist(regiones), collapse = " + ")
+
+# 11. CÁLCULO DE LA SEÑAL DE CAMBIO CLIMÁTICO Y SPREAD FUTURO (2071-2100 vs 1981-2010)
+cat(sprintf("\n--- CALCULANDO SEÑAL DE CAMBIO CLIMÁTICO Y SPREAD FUTURO (%s | %s) ---\n", rcp_selected, reg_tag))
 p_present <- "period.1981_2010"
 p_future  <- "period.2071_2100"
-reg_lbl   <- "CAM"
+spread_rcp <- if (!is.null(stats_all[["tas"]][[rcp_selected]])) rcp_selected else "ssp585"
 
 spread_rows <- list()
 for (i in seq_along(common_models)) {
@@ -365,16 +385,34 @@ for (i in seq_along(common_models)) {
   fam <- clean_families[i]
   gcm_key <- sub("^[a-z0-9]+\\.", "", m_id)
   
-  # Temperatura
-  tas_pres <- stats_all[["tas"]][["ssp585"]][[p_present]][[gcm_key]][[reg_lbl]][["mean"]][["ann"]]
-  tas_fut  <- stats_all[["tas"]][["ssp585"]][[p_future]][[gcm_key]][[reg_lbl]][["mean"]][["ann"]]
-  delta_tas <- if (!is.null(tas_fut) && !is.null(tas_pres)) tas_fut - tas_pres else NA
-  
-  # Precipitación
-  pr_pres <- stats_all[["pr"]][["ssp585"]][[p_present]][[gcm_key]][[reg_lbl]][["mean"]][["ann"]]
-  pr_fut  <- stats_all[["pr"]][["ssp585"]][[p_future]][[gcm_key]][[reg_lbl]][["mean"]][["ann"]]
-  delta_pr_mm_day <- if (!is.null(pr_fut) && !is.null(pr_pres)) (pr_fut - pr_pres) * 86400 else NA
-  delta_pr_pct    <- if (!is.null(pr_fut) && !is.null(pr_pres) && pr_pres > 0) ((pr_fut - pr_pres) / pr_pres) * 100 else NA
+  # Promedio ponderado por w_region sobre las regiones activas
+  dt_vec <- c()
+  dp_mm_vec <- c()
+  dp_pct_vec <- c()
+  w_valid <- c()
+  for (r_idx in seq_along(reg_keys)) {
+    rk <- reg_keys[r_idx]
+    tas_pres <- stats_all[["tas"]][[spread_rcp]][[p_present]][[gcm_key]][[rk]][["mean"]][["ann"]]
+    tas_fut  <- stats_all[["tas"]][[spread_rcp]][[p_future]][[gcm_key]][[rk]][["mean"]][["ann"]]
+    pr_pres  <- stats_all[["pr"]][[spread_rcp]][[p_present]][[gcm_key]][[rk]][["mean"]][["ann"]]
+    pr_fut   <- stats_all[["pr"]][[spread_rcp]][[p_future]][[gcm_key]][[rk]][["mean"]][["ann"]]
+    if (!is.null(tas_fut) && !is.null(tas_pres) && !is.null(pr_fut) && !is.null(pr_pres) && pr_pres > 0) {
+      dt_vec <- c(dt_vec, tas_fut - tas_pres)
+      dp_mm_vec <- c(dp_mm_vec, (pr_fut - pr_pres) * 86400)
+      dp_pct_vec <- c(dp_pct_vec, ((pr_fut - pr_pres) / pr_pres) * 100)
+      w_valid <- c(w_valid, w_region[r_idx])
+    }
+  }
+  if (length(w_valid) > 0 && sum(w_valid) > 0) {
+    w_norm <- w_valid / sum(w_valid)
+    delta_tas <- sum(dt_vec * w_norm)
+    delta_pr_mm_day <- sum(dp_mm_vec * w_norm)
+    delta_pr_pct <- sum(dp_pct_vec * w_norm)
+  } else {
+    delta_tas <- NA
+    delta_pr_mm_day <- NA
+    delta_pr_pct <- NA
+  }
   
   fam_match <- which(stage3$Mejor_Variante == m_clean)
   fam_rank <- if (length(fam_match) > 0) stage3$Rank_Familia[fam_match[1]] else as.integer(NA)
@@ -412,10 +450,9 @@ spread_csv <- file.path(results_dir, "future_spread_data.csv")
 write.csv(spread_df, spread_csv, row.names = FALSE)
 cat(sprintf("[OK] Datos de Spread Futuro guardados: %s\n", spread_csv))
 
-# 12. GENERACIÓN DEL GRÁFICO DE SPREAD (ΔT vs ΔP) CON GGPLOT2
 # 12. GENERACIÓN DEL GRÁFICO DE SPREAD (ΔT vs ΔP) ESTILO GCMEVAL
-spread_plot_png  <- file.path(results_dir, "future_spread_ssp585_CAM.png")
-spread_plot_html <- file.path(results_dir, "future_spread_ssp585_CAM.html")
+spread_plot_png  <- file.path(results_dir, sprintf("future_spread_%s_%s.png", spread_rcp, reg_tag))
+spread_plot_html <- file.path(results_dir, sprintf("future_spread_%s_%s.html", spread_rcp, reg_tag))
 
 # Paleta oficial de GCMEval (de rosa/magenta = menor desempeño a verde oscuro = mejor desempeño)
 # rev(c("#d01c8b","#d196ba","#d7d7d7","#98c166","#4dac26"))
@@ -464,10 +501,12 @@ p <- ggplot(spread_df, aes(x = Delta_Tas_C, y = Delta_Pr_pct)) +
   scale_shape_manual(values = c("TRUE" = 18, "FALSE" = 1), name = "Representante", labels = c("Otras Variantes", "Mejor por Familia")) +
   geom_text(data = best_df, aes(label = sprintf("%s (#%d)", Familia, Rank_Familia)),
             vjust = -0.9, hjust = 0.5, size = 3.3, fontface = "bold", color = "#1a1a1a", check_overlap = FALSE) +
-  coord_cartesian(xlim = c(2.2, 5.3), ylim = c(-35, 10)) +
+  scale_x_continuous(expand = expansion(mult = c(0.08, 0.08))) +
+  scale_y_continuous(expand = expansion(mult = c(0.12, 0.12))) +
   labs(
-    title = "Annual Climate Change in Central America / Mexico (CAM:6)",
-    subtitle = "Present day (1981-2010) to Far Future (2071-2100) | SSP5-8.5\nGCMEval Framework: ERA5 (tas) & GPCP (pr) Reference | 16 CMIP6 Families",
+    title = sprintf("Annual Climate Change in %s", reg_title),
+    subtitle = sprintf("Present day (1981-2010) to Far Future (2071-2100) | %s\nGCMEval Framework: %s (tas) & %s (pr) Reference | %d CMIP6 Families",
+                       toupper(spread_rcp), ref_tas, ref_pr, nrow(stage3)),
     x = "Temperature change (°C)",
     y = "Precipitation change (%)",
     caption = "GCMEval Multi-criteria Evaluation | MARN El Salvador"
@@ -526,7 +565,7 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
     layout(
       xaxis = list(title = "Temperature change (°C)", zerolinecolor = "#bdbdbd", zerolinewidth = 1),
       yaxis = list(title = "Precipitation change (%)", zerolinecolor = "#bdbdbd", zerolinewidth = 1),
-      title = list(text = "<b>Climate Change Spread in Central America/Mexico (CAM:6)</b><br><sup>SSP5-8.5 (2071-2100 vs 1981-2010) - Haz clic en un modelo para ver sus estadísticas detalladas</sup>"),
+      title = list(text = sprintf("<b>Climate Change Spread in %s</b><br><sup>%s (2071-2100 vs 1981-2010) - Haz clic en un modelo para ver sus estadísticas detalladas</sup>", reg_title, toupper(spread_rcp))),
       legend = list(orientation = "h", xanchor = "center", x = 0.5, y = -0.15)
     )
   
@@ -637,7 +676,7 @@ if (requireNamespace("plotly", quietly = TRUE) && requireNamespace("htmlwidgets"
 
 # 13. Mostrar resultados finales de todas las familias evaluadas
 cat("\n" , paste(rep("=", 85), collapse=""), "\n")
-cat("            RANKING GENERAL DE LAS 16 FAMILIAS EVALUADAS (CENTROAMÉRICA)\n")
+cat(sprintf("      RANKING GENERAL DE LAS %d FAMILIAS EVALUADAS (%s)\n", nrow(stage3), reg_tag))
 cat(paste(rep("=", 85), collapse=""), "\n")
 cat(sprintf("%-4s %-16s %-22s %-10s %-8s %-10s %-8s %-10s\n",
             "Rank", "Familia", "Mejor Variante", "Mean Rank", "SD Rank", "Top 10", "ΔT (°C)", "ΔP (%)"))
@@ -652,15 +691,15 @@ for (i in seq_len(nrow(stage3))) {
 cat(paste(rep("=", 85), collapse=""), "\n\n")
 
 # 14. SELECCIÓN DEL ENSAMBLE FINAL DE 10 MODELOS (Deduplicación por Resolución y Desempeño)
-# Criterios de deduplicación institucional:
-# - NorESM2: NorESM2-MM (Rank 1, ~100 km) retenido frente a NorESM2-LM (Rank 11, ~250 km).
-# - EC-Earth3: EC-Earth3-Veg (Rank 2, ~100 km) retenido frente a EC-Earth3-Veg-LR (Rank 5, ~250 km).
-# - MPI-ESM1-2: MPI-ESM1-2-LR (Rank 4, mayor consistencia 8/9 Top 10) retenido frente a MPI-ESM1-2-HR (Rank 6).
-# - INM: INM-CM4-8 (Rank 10) retenido frente a INM-CM5-0 (Rank 13).
-# Descarte por menor desempeño / sesgos extremos en Centroamérica: FGOALS-g3 (Rank 15) y CanESM5 (Rank 16).
-
-discarded_redundant <- c("EC-Earth3-Veg-LR", "MPI-ESM1-2-HR", "NorESM2-LM", "INM-CM5-0", "FGOALS-g3", "CanESM5")
-final_ensemble_df <- stage3[!stage3$Familia %in% discarded_redundant, ]
+if (reg_tag == "CAM") {
+  discarded_redundant <- c("EC-Earth3-Veg-LR", "MPI-ESM1-2-HR", "NorESM2-LM", "INM-CM5-0", "FGOALS-g3", "CanESM5")
+  final_ensemble_df <- stage3[!stage3$Familia %in% discarded_redundant, ]
+} else {
+  # Para cualquier otra región: deduplicar versiones redundantes de menor desempeño por familia base y tomar Top 10
+  base_group <- sub("-(LR|HR|Veg-LR|Veg|MM|LM|CM5-0|CM4-8)$", "", stage3$Familia)
+  keep_idx <- !duplicated(base_group)
+  final_ensemble_df <- head(stage3[keep_idx, ], 10)
+}
 final_ensemble_df$Rank_Ensamble <- seq_len(nrow(final_ensemble_df))
 
 # Guardar lista final en selected_models.csv (en raíz y en results/)

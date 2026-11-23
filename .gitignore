@@ -63,3 +63,6 @@ cmip6_*.tsv
 esgf_raw_datasets.json
 esgf_raw_files.json
 *.json.bak
+
+# Evaluation & pipeline results (local only, not synced)
+results/

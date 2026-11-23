@@ -16,14 +16,19 @@ observations:
   precipitation: "GPCP"    # Opciones: GPCP, CHIRPS, MSWEP
 
 # 3. Regiones de Evaluación y Ponderaciones Espaciales
+#    Por defecto se evalúa únicamente la región primaria (Centroamérica CAM:6).
+#    La región secundaria tiene peso 0.0 por defecto (no se considera en la evaluación).
+#    También puede cambiarlas desde línea de comandos con:
+#      python run_evaluation.py --list-regions
+#      python run_evaluation.py --region "Amazon [AMZ:7]"
 regions:
   primary:
     name: "Central America/Mexico [CAM:6]"
     weight: 1.0
   secondary:
     enabled: false
-    name: "small islands regions Caribbean"  # Opciones: "Amazon [AMZ:7]", "West Coast South America [WSA:9]", "small islands regions Caribbean"
-    weight: 0.3
+    name: "small islands regions Caribbean"  # Cualquier región de GCMEval (ej. "Amazon [AMZ:7]", "West Coast South America [WSA:9]")
+    weight: 0.0
 
 # 4. Ponderación Global de Métricas Climatológicas (Valores por defecto)
 metrics_weights:

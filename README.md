@@ -18,11 +18,9 @@ Este repositorio contiene las herramientas automatizadas para:
 - [Estructura del Repositorio](#-estructura-del-repositorio)
 - [Requisitos y Dependencias](#-requisitos-y-dependencias)
 - [Modelos, Variables y Experimentos](#-modelos-variables-y-experimentos)
-- [Evaluación Climatológica y Selección de Ensamble (GCMEval Centroamérica CAM:6)](#-evaluación-climatológica-y-selección-de-ensamble-gcmeval-centroamérica-cam6)
-  - [Embudo de Selección de Realizaciones y Familias](#embudo-de-selección-de-realizaciones-y-familias)
+- [Evaluación Climatológica y Selección de Ensamble (GCMEval)](#evaluación-climatológica-y-selección-de-ensamble-gcmeval)
   - [Diseño y Justificación Climatológica de los 9 Experimentos (E0 a E8)](#diseño-y-justificación-climatológica-de-los-9-experimentos-e0-a-e8)
-  - [Metodología de Selección en 3 Etapas y Ranking Final de Familias](#metodología-de-selección-en-3-etapas-y-ranking-final-de-familias)
-  - [Espacio de Incertidumbre y Gráfico de Dispersión Futuro (ΔT vs ΔP)](#espacio-de-incertidumbre-y-gráfico-de-dispersión-futuro-δt-vs-δp)
+  - [Metodología de Selección en 3 Etapas](#metodología-de-selección-en-3-etapas)
   - [Anexo Técnico: Cálculo de Estadísticas GCMEval para Nuevos Modelos (CDO + R)](#anexo-técnico-cálculo-de-estadísticas-gcmeval-para-nuevos-modelos-cdo--r)
 - [Flujo de Trabajo Paso a Paso](#-flujo-de-trabajo-paso-a-paso)
   - [Paso 1: Inventario Global y Extracción de URLs (`esgf-query.py`)](#paso-1-inventario-global-y-extracción-de-urls-esgf-querypy)
@@ -52,18 +50,21 @@ Este repositorio contiene las herramientas automatizadas para:
 │   ├── back-end/                  # Paquete R gcmeval, funciones estadísticas y datos (statistics.rda)
 │   └── front-end/                 # Aplicación web interactiva Shiny
 │
-├── results/                       # Salidas de evaluación y rankings generados
+├── results/                       # Salidas de evaluación, rankings y reportes en Markdown
+│   ├── README.md                  # Índice general de resultados por etapa
+│   ├── etapas/                    # Reportes Markdown detallados por cada paso del pipeline
+│   │   ├── etapa1_inventario_esgf.md
+│   │   ├── etapa2_evaluacion_gcmeval.md
+│   │   ├── etapa3_manifiesto_descarga.md
+│   │   └── etapa4_descarga_preprocesamiento.md
 │   ├── ranking_E0.csv ... E8.csv  # Rankings individuales por cada experimento
 │   ├── ranking_summary_all_experiments.csv # Matriz consolidada de los 9 experimentos
-│   ├── analysis_stage1_variants.csv        # Etapa 1: Estadísticas de las 36 variantes
+│   ├── analysis_stage1_variants.csv        # Etapa 1: Estadísticas de las variantes evaluadas
 │   ├── analysis_stage2_best_variants.csv   # Etapa 2: Mejor variante seleccionada por familia
-│   ├── analysis_stage3_families.csv        # Etapa 3: Ranking final de las 16 familias
+│   ├── analysis_stage3_families.csv        # Etapa 3: Ranking final de familias
 │   ├── future_spread_data.csv              # Datos de cambio climático proyectado (ΔT y ΔP)
 │   ├── future_spread_ssp585_CAM.png        # Gráfico estático de alta resolución (300 DPI)
 │   └── future_spread_ssp585_CAM.html       # Gráfico interactivo Web / Plotly (estilo Shiny)
-│
-├── generate_report_docx.py        # Generador del informe técnico profesional en formato Microsoft Word
-├── Informe_Evaluacion_Seleccion_Modelos_CMIP6_Centroamerica.docx # Informe técnico completo del proyecto
 │
 ├── cmip6_daily_inventory.xlsx     # Libro Excel (hojas: inventory, summary, selected, files) con columnas de período
 ├── cmip6_daily_inventory.csv      # Inventario tabular de datasets
@@ -79,7 +80,7 @@ Este repositorio contiene las herramientas automatizadas para:
 
 ## ⚙️ Requisitos y Dependencias
 
-El pipeline integra herramientas en **Python** (consultas ESGF, manifiestos, reportes), **R** (evaluación y ranking estadístico GCMEval) y **herramientas CLI del sistema** (CDO, aria2c, SSH).
+El pipeline integra herramientas en **Python** (consultas ESGF, manifiestos, orquestación), **R** (evaluación y ranking estadístico GCMEval) y **herramientas CLI del sistema** (CDO, aria2c, SSH).
 
 ### 1. Entorno Python (Recomendado vía Mamba / Conda)
 
@@ -87,7 +88,7 @@ Se recomienda utilizar **Mamba** (o **Conda**) en un entorno Python 3.11:
 
 ```bash
 # 1. Crear y activar el entorno con todas las dependencias
-mamba create -n climate python=3.11 requests pandas openpyxl python-docx urllib3 cdo aria2 curl rsync openssh coreutils -c conda-forge -y
+mamba create -n climate python=3.11 r-base requests pandas openpyxl pyyaml urllib3 cdo aria2 curl rsync openssh coreutils -c conda-forge -y
 mamba activate climate
 ```
 
@@ -131,14 +132,14 @@ El inventario aplica un embudo jerárquico de 3 niveles para garantizar que úni
 
 ```mermaid
 flowchart TD
-    A["1. Universo ESGF y MetaGrid<br>(62 familias de modelos, 2335 combinaciones)"] --> B["2. Filtro Tecnico de Disponibilidad ESGF<br>(10 variables en 5 experimentos completos)"]
-    B --> C["90 Realizaciones 100% Completas en ESGF<br>(23 familias de modelos)"]
+    A["1. Universo ESGF y MetaGrid"] --> B["2. Filtro Técnico de Disponibilidad ESGF<br>(10 variables en 5 experimentos completos)"]
+    B --> C["Realizaciones 100% Completas en ESGF"]
     
-    D["Catalogo GCMEval<br>(gcmeval_models.csv: 120 combinaciones)"] --> E{"Interseccion Estricta"}
+    D["Catálogo GCMEval<br>(gcmeval_models.csv)"] --> E{"Intersección Estricta"}
     C --> E
     
-    E --> F["3. Realizaciones Seleccionadas Finales<br>(36 combinaciones modelo.variante)"]
-    F --> G["Fase 2: Catalogo y Manifiesto de Descarga<br>(1800 consultas de archivos NetCDF)"]
+    E --> F["3. Realizaciones Candidatas Evaluables<br>(cmip6_complete_models.csv)"]
+    F --> G["Fase 2: Evaluación GCMEval y Manifiesto de Descarga"]
 ```
 
 1. **Nivel 1: Familias de Modelos y Realizaciones en ESGF:**
@@ -146,28 +147,9 @@ flowchart TD
 2. **Nivel 2: Criterio de Disponibilidad Técnica y Cobertura Temporal:**
    * Filtra las realizaciones que poseen publicadas **las 10 variables diarias en los 5 experimentos requeridos** (`historical` y los 4 SSPs), garantizando que cubran el **100% de los años requeridos** (`1950/1980-2014` para historical y `2015-2100` para SSPs).
 3. **Nivel 3: Subconjunto Validado en GCMEval:**
-   * Cruza la lista resultante contra el catálogo objetivo de **GCMEval** ([`gcmeval/gcmeval_models.csv`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/gcmeval_models.csv)), seleccionando exactamente el subconjunto de **36 realizaciones** que cuentan con evaluación climática y respaldo metodológico.
+   * Cruza la lista resultante contra el catálogo objetivo de **GCMEval** ([`gcmeval/gcmeval_models.csv`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/gcmeval_models.csv)), seleccionando el subconjunto de realizaciones que cuentan con evaluación climática y respaldo metodológico.
 
----
-
-### 10 Modelos de Ensamble Seleccionados (Evaluación de Cobertura Temporal en ESGF)
-
-El catálogo evalúa la disponibilidad de los modelos aplicando un **filtrado estricto por período de interés** (`1950-2014` para historical y `2015-2100` para SSPs). La lista de modelos a procesar se gestiona en `selected_models.csv`:
-
-| N° | Modelo (`source_id`) | Miembro (`variant_label`) | Datasets en Período | Estado |
-|:---|:---------------------|:--------------------------|:-------------------:|:------:|
-| 1 | `NorESM2-MM` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 2 | `EC-Earth3` | `r4i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 3 | `UKESM1-0-LL` | `r1i1p1f2` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 4 | `MPI-ESM1-2-LR` | `r5i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 5 | `TaiESM1` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 6 | `MRI-ESM2-0` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 7 | `IPSL-CM6A-LR` | `r2i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 8 | `INM-CM4-8` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 9 | `KACE-1-0-G` | `r1i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-| 10 | `ACCESS-CM2` | `r4i1p1f1` | 50 / 50 | 100% Completo (1950-2014 / 2015-2100) |
-
-> **Nota**: Para `ACCESS-CM2`, la variante `r1i1p1f1` en ESGF carece de proyecciones 2015-2100 para algunas variables (publicó extensiones 2251-2300). Usando la variante `r4i1p1f1` (o `r5i1p1f1`), el ensamble alcanza el **100% de cobertura completa (50/50)**.
+> **Resultados obtenidos**: Consulta el detalle completo del inventario y las realizaciones seleccionadas en [`results/etapas/etapa1_inventario_esgf.md`](results/etapas/etapa1_inventario_esgf.md). La lista operativa final para descarga se gestiona en [`selected_models.csv`](selected_models.csv).
 
 ### 10 Variables Diarias (`table_id = day`)
 - `ua`: Viento zonal (m/s)
@@ -187,37 +169,15 @@ El catálogo evalúa la disponibilidad de los modelos aplicando un **filtrado es
 
 ---
 
-## 📊 Evaluación Climatológica y Selección de Ensamble (GCMEval Centroamérica CAM:6)
+## 📊 Evaluación Climatológica y Selección de Ensamble (GCMEval)
 
-Para garantizar la representatividad y robustez climática de los modelos globales (GCM) seleccionados para el downscaling estadístico (*DeepSD*) en América Central, se integró el motor analítico de **GCMEval** ([Brunner et al., 2020](https://doi.org/10.5194/esd-11-995-2020)).
+Para garantizar la representatividad y robustez climática de los modelos globales (GCM) seleccionados para el downscaling estadístico (*DeepSD*), se integró el motor analítico de **GCMEval** ([Brunner et al., 2020](https://doi.org/10.5194/esd-11-995-2020)).
 
-La evaluación se realizó sobre la región IPCC **`"Central America/Mexico [CAM:6]"`**, utilizando datos observacionales de referencia globales de alta calidad:
-- **Temperatura (`tas`)**: Reanálisis **ERA5** (ECMWF).
-- **Precipitación (`pr`)**: Producto observacional satelital y de estaciones **GPCP v2.3** (Global Precipitation Climatology Project).
+Por defecto, la evaluación se configura sobre la región IPCC **`"Central America/Mexico [CAM:6]"`** (configurable en `evaluation_config.yaml` o mediante el asistente de `run_evaluation.py`), utilizando datos observacionales de referencia globales:
+- **Temperatura (`tas`)**: Reanálisis **ERA5** (ECMWF) — también soporta `NCEP`, `CRU`.
+- **Precipitación (`pr`)**: Producto observacional satelital y de estaciones **GPCP v2.3** — también soporta `CHIRPS`, `MSWEP`.
 
-### Embudo de Selección de Realizaciones y Familias
-
-De las **90 realizaciones** (23 familias) con disponibilidad técnica completa en ESGF (10 variables, 5 experimentos, 1950–2100), se identificaron **36 realizaciones** pertenecientes a **16 familias globales únicas** con métricas climatológicas precomputadas en GCMEval:
-
-```text
-36 Realizaciones Evaluadas en GCMEval (16 Familias Únicas):
-├── NorESM2-MM (r1i1p1f1)
-├── EC-Earth3-Veg (r4i1p1f1)
-├── UKESM1-0-LL (r1i1p1f2, r2i1p1f2, r3i1p1f2, r4i1p1f2, r8i1p1f2)
-├── MPI-ESM1-2-LR (r1i1p1f1, r2i1p1f1, r3i1p1f1, r4i1p1f1, r5i1p1f1, r6i1p1f1, r7i1p1f1, r8i1p1f1, r9i1p1f1, r10i1p1f1)
-├── EC-Earth3-Veg-LR (r1i1p1f1)
-├── MPI-ESM1-2-HR (r1i1p1f1)
-├── TaiESM1 (r1i1p1f1)
-├── MRI-ESM2-0 (r1i1p1f1)
-├── IPSL-CM6A-LR (r1i1p1f1, r2i1p1f1, r3i1p1f1, r4i1p1f1, r6i1p1f1, r14i1p1f1)
-├── INM-CM4-8 (r1i1p1f1)
-├── NorESM2-LM (r1i1p1f1)
-├── KACE-1-0-G (r1i1p1f1)
-├── INM-CM5-0 (r1i1p1f1)
-├── MIROC6 (r1i1p1f1, r2i1p1f1)
-├── FGOALS-g3 (r1i1p1f1)
-└── CanESM5 (r1i1p1f1, r2i1p1f1)
-```
+> **Resultados de la evaluación**: Todos los rankings por experimento (`E0` a `E8`), la matriz consolidada, el ranking final ganador de familias/ensamble y los gráficos de dispersión futura ($\Delta T$ vs $\Delta P$) se encuentran documentados en [`results/etapas/etapa2_evaluacion_gcmeval.md`](results/etapas/etapa2_evaluacion_gcmeval.md).
 
 ---
 
@@ -255,67 +215,24 @@ En el motor analítico y la interfaz de **GCMEval**, cada parámetro se calibra 
 
 ---
 
-### Criterios de Selección, Desduplicación y Remoción de Candidatos
+### Criterios de Selección y Desduplicación de Candidatos
 
-Para definir el ensamble final se aplicaron tres criterios de exclusión:
-1. **Desduplicación Intra-Familia (Condiciones Iniciales)**: Se evalúan todas las variantes (ej. 10 de MPI, 6 de IPSL, 5 de UKESM), pero se retiene únicamente el miembro con menor *Mean Rank* y mayor estabilidad.
-2. **Discriminación por Resolución Espacial en la Misma Familia**:
-   - **`NorESM2-MM` (~1°) vs `NorESM2-LM` (~2°)**: `NorESM2-MM` obtuvo el puesto **#1.00** unánime, mientras que `NorESM2-LM` cayó al puesto **#11** (Rank 26.67). Se descarta `LM` y se retiene únicamente `MM`.
-   - **`EC-Earth3-Veg` (~100 km) vs `EC-Earth3-Veg-LR` (~250 km)**: `EC-Earth3-Veg` estándar superó ampliamente a la versión de baja resolución `LR` (Rank #2.22 vs #9.89). Se retiene la versión estándar `Veg`.
-   - **`MPI-ESM1-2-LR` vs `MPI-ESM1-2-HR`**: La variante `MPI-ESM1-2-LR.r5i1p1f1` demostró mayor balance global (Rank #6.11) frente a `HR` (Rank #10.50).
-3. **Exclusión por Sesgos Extremos o Sensibilidad No Física**:
-   - **`CanESM5` (Rank #16 - 35.00)**: Rango inferior persistente (#35-#36), sensibilidad climática excesiva (ECS > 5.6°C) y secamiento extremo (-24% a -31%).
-   - **`FGOALS-g3` (Rank #15)** y **`MIROC6` (Rank #14)**: Dificultades severas en capturar la dinámica orográfica centroamericana.
-   - **`INM-CM4-8` (Rank #10)** e **`INM-CM5-0` (Rank #13)**: Muy baja sensibilidad térmica (+2.5°C) y señal anómala de incremento de precipitación (+5.9%), contraria al consenso físico.
+Para definir el ensamble final a partir del ranking se aplican tres criterios metodológicos:
+1. **Desduplicación Intra-Familia (Condiciones Iniciales)**: Se evalúan todas las variantes disponibles por modelo, reteniendo únicamente el miembro con menor *Mean Rank* y mayor estabilidad.
+2. **Discriminación por Resolución Espacial en la Misma Familia**: Cuando coexisten versiones de alta/estándar resolución y baja resolución (`MM` vs `LM`, `Veg` vs `Veg-LR`, `LR` vs `HR`), se prioriza la variante con mejor desempeño y consistencia regional.
+3. **Exclusión por Sesgos Extremos o Sensibilidad No Física**: Se descartan los modelos en las posiciones inferiores del ranking que presentan sesgos sistemáticos severos o sensibilidad climática anómala respecto al consenso físico.
 
 ---
 
-### Metodología de Selección en 3 Etapas y Ranking Final de Familias
+### Metodología de Selección en 3 Etapas
 
-Para estructurar un ensamble multi-modelo robusto e independiente (evitando la sobre-representación de centros climáticos que publicaron decenas de variantes del mismo código fuente), se aplicó el siguiente protocolo:
+Para estructurar un ensamble multi-modelo robusto e independiente (evitando la sobre-representación de centros climáticos que publicaron decenas de variantes del mismo código fuente), se aplica el siguiente protocolo:
 
-1. **Etapa 1 (Estadística de Realizaciones)**: Cálculo de posición media (*Mean Rank*), desviación estándar (*SD Rank*) y frecuencia de permanencia en el Top 10 (*Freq Top 10*) para las 36 realizaciones a través de los 9 experimentos.
-2. **Etapa 2 (Selección Intra-Familia)**: Identificación de la **mejor variante representativa** dentro de cada una de las 16 familias (aquella con el menor *Mean Rank* y mayor estabilidad).
-3. **Etapa 3 (Ranking Inter-Familias)**: Ordenamiento final de las 16 familias globales representadas por su mejor miembro.
+1. **Etapa 1 (Estadística de Realizaciones)**: Cálculo de posición media (*Mean Rank*), desviación estándar (*SD Rank*) y frecuencia de permanencia en el Top 10 (*Freq Top 10*) para las realizaciones evaluadas a través de los 9 experimentos.
+2. **Etapa 2 (Selección Intra-Familia)**: Identificación de la **mejor variante representativa** dentro de cada familia (aquella con el menor *Mean Rank* y mayor estabilidad).
+3. **Etapa 3 (Ranking Inter-Familias y Spread Futuro)**: Ordenamiento final de las familias globales representadas por su mejor miembro, junto con el cálculo de la señal de cambio climático proyectado ($\Delta T$ vs $\Delta P$) y la exportación de gráficos estáticos (`.png`) e interactivos (`.html`).
 
-#### 🏆 Tabla de Ranking Final de las 16 Familias CMIP6 (Centroamérica CAM:6)
-
-| Rank | Familia GCM | Variante Óptima | Ranking Medio (SD) | Frec. Top 10 | Variantes en ESGF | $\Delta T$ (°C) (ssp585) | $\Delta P$ (%) (ssp585) | Desempeño y Aptitud Regional |
-|:---:|:---|:---|:---:|:---:|:---:|:---:|:---:|:---|
-| **1** | **`NorESM2-MM`** | `r1i1p1f1` | **1.00** (±0.00) | **9 / 9** | 1 | +3.54 °C | -7.8 % | 🌟 **Rendimiento Excepcional**: Rank #1 unánime en los 9 experimentos. Excelente balance térmico y ciclo bimodal. |
-| **2** | **`EC-Earth3-Veg`** | `r4i1p1f1` | **2.22** (±0.44) | **9 / 9** | 1 | +4.07 °C | -8.2 % | 🌟 **Rendimiento Sobresaliente**: Consistentemente en el Top 2/3. Excelente acoplamiento atmósfera-vegetación. |
-| **3** | **`UKESM1-0-LL`** | `r1i1p1f2` | **5.28** (±3.15) | **8 / 9** | 5 | +4.97 °C | -6.2 % | 🥇 **Alto Rendimiento**: Alta sensibilidad climática; excelente representación de la dinámica de gran escala. |
-| **4** | **`MPI-ESM1-2-LR`** | `r5i1p1f1` | **6.11** (±2.20) | **8 / 9** | 10 | +2.87 °C | -12.0 % | 🥇 **Alto Rendimiento**: Excelente estabilidad en las 10 variantes. Muy buen ciclo diurno y gradientes térmicos. |
-| **5** | **`EC-Earth3-Veg-LR`**| `r1i1p1f1` | **9.89** (±5.21) | **5 / 9** | 1 | +3.73 °C | -9.5 % | 🥇 **Alto Rendimiento**: Buena consistencia con la versión estándar `Veg`. |
-| **6** | **`MPI-ESM1-2-HR`** | `r1i1p1f1` | **10.50** (±7.45) | **5 / 9** | 1 | +2.77 °C | -10.2 % | 🥈 **Rendimiento Bueno**: Alta resolución espacial (HR); sensible a la métrica de gradiente orográfico. |
-| **7** | **`TaiESM1`** | `r1i1p1f1` | **17.28** (±5.76) | **1 / 9** | 1 | +4.46 °C | -8.0 % | 🥈 **Rendimiento Intermedio Alto**: Buen desempeño en gradientes espaciales y temperatura. |
-| **8** | **`MRI-ESM2-0`** | `r1i1p1f1` | **18.00** (±1.80) | **0 / 9** | 1 | +3.42 °C | -10.5 % | 🥈 **Rendimiento Intermedio**: Muy baja variabilidad de ranking (estable), pero sesgo moderado en lluvias. |
-| **9** | **`IPSL-CM6A-LR`** | `r2i1p1f1` | **20.44** (±6.27) | **1 / 9** | 6 | +4.00 °C | -24.0 % | 🥉 **Rendimiento Moderado**: Fuerte secamiento a futuro (-24%); sobreestima la intensidad de la canícula. |
-| **10** | **`INM-CM4-8`** | `r1i1p1f1` | **26.33** (±2.92) | **0 / 9** | 1 | +2.68 °C | +5.9 % | 🥉 **Rendimiento Moderado**: Baja sensibilidad climática; tendencia al humedecimiento anómalo. |
-| **11** | **`NorESM2-LM`** | `r1i1p1f1` | **26.67** (±4.30) | **0 / 9** | 1 | +3.36 °C | -0.7 % | 🥉 **Rendimiento Moderado**: Resolución espacial reducida (LM) frente a `NorESM2-MM`. |
-| **12** | **`KACE-1-0-G`** | `r1i1p1f1` | **28.33** (±2.92) | **0 / 9** | 1 | +4.07 °C | -6.9 % | ⚠️ **Rendimiento Bajo**: Sesgos sistemáticos en la distribución espacial de precipitación. |
-| **13** | **`INM-CM5-0`** | `r1i1p1f1` | **28.67** (±1.73) | **0 / 9** | 1 | +2.52 °C | -0.6 % | ⚠️ **Rendimiento Bajo**: Muy bajo calentamiento futuro; escasa variabilidad interanual. |
-| **14** | **`MIROC6`** | `r1i1p1f1` | **31.56** (±2.96) | **0 / 9** | 2 | +3.25 °C | +4.6 % | ⚠️ **Rendimiento Bajo**: Dificultades en representar la señal de precipitación orográfica en CAM. |
-| **15** | **`FGOALS-g3`** | `r1i1p1f1` | **33.00** (±1.58) | **0 / 9** | 1 | +2.52 °C | -10.5 % | ❌ **No Recomendado**: Sesgo frío y problemas en la dinámica estacional centroamericana. |
-| **16** | **`CanESM5`** | `r1i1p1f1` | **35.00** (±0.50) | **0 / 9** | 2 | +4.99 °C | -23.6 % | ❌ **No Recomendado**: Rango inferior persistente (#35-#36). Muy alta sensibilidad climática y sesgo seco extremo. |
-
----
-
-### Espacio de Incertidumbre y Gráfico de Dispersión Futuro ($\Delta T$ vs $\Delta P$)
-
-El análisis de cambio climático proyectado bajo el escenario de altas emisiones **SSP5-8.5** para el período fin de siglo (**2071–2100**) respecto al período base (**1981–2010**) en la región CAM:6 muestra la estructura del espacio de incertidumbre del ensamble:
-
-![Dispersión de Cambio Climático Futuro](results/future_spread_ssp585_CAM.png)
-
-> **Figura**: Gráfico de dispersión generado por [`gcmeval/run_cmip6_evaluation.R`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/run_cmip6_evaluation.R) replicando la estética y paleta oficial de GCMEval (`c("#4dac26", "#98c166", "#d7d7d7", "#d196ba", "#d01c8b")`).
-> - **Versión Interactiva (HTML / Plotly)**: Disponible en [`results/future_spread_ssp585_CAM.html`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/results/future_spread_ssp585_CAM.html) con tooltips dinámicos, zoom, selección interactiva y diagramas de caja (boxplots) marginales de distribución, exactamente como en la aplicación web Shiny de GCMEval.
-> - **Puntos Destacados**: Los rombos etiquetados representan la **mejor variante representativa de cada familia**. El gradiente de color refleja el desempeño multivariado (verde = mejor desempeño / rank #1; rosa/magenta = inferior).
-
-#### Hallazgos Clave de la Proyección Futura en Centroamérica:
-1. **Calentamiento Regional Consistente**: Todos los modelos proyectan un calentamiento que oscila entre **$+2.5^\circ\text{C}$** (`INM-CM5-0`, `FGOALS-g3`) y **$+5.0^\circ\text{C}$** (`UKESM1-0-LL`, `CanESM5`).
-2. **Tendencia Dominante al Secamiento**: Los mejores modelos del ensamble (`NorESM2-MM`, `EC-Earth3-Veg`, `UKESM1-0-LL`, `MPI-ESM1-2-LR`) convergen en una reducción de precipitación anual de entre **$-6\%$ y $-12\%$**.
-3. **Casos Extremos de Secamiento**: Modelos como `IPSL-CM6A-LR` y `CanESM5` proyectan un secamiento severo de entre **$-20\%$ y $-31\%$**.
-4. **Modelos con Respuesta Húmeda Anómala**: Únicamente `INM-CM4-8` (+5.9%) y `MIROC6` (+4.6%) proyectan un incremento en precipitación, lo cual contrasta con el consenso físico de intensificación de la sequía regional.
+> Los resultados completos de las 3 etapas, el ranking por experimento y el ensamble ganador están disponibles en [`results/etapas/etapa2_evaluacion_gcmeval.md`](results/etapas/etapa2_evaluacion_gcmeval.md).
 
 ---
 
@@ -378,7 +295,7 @@ Una vez actualizado `statistics.rda`, el script `run_cmip6_evaluation.R` detecta
 flowchart TD
     subgraph PC1["PC de Descarga y Procesamiento"]
         A["1. esgf-query.py"] -->|Consulta ESGF y Cruce GCMEval| B["Inventario Excel / CSV<br>cmip6_complete_models.csv"]
-        B -->|36 Modelos Candidatos| C["2. run_evaluation.py<br>(Evaluación R GCMEval)"]
+        B -->|Realizaciones Candidatas| C["2. run_evaluation.py<br>(Evaluación R GCMEval)"]
         C -->|Rankings E0-E8 + Spread| D["Selección de Familias<br>selected_models.csv"]
         D --> E["3. generate_manifest.py"]
         E -->|cmip6_manifest.tsv| F["4. download_preprocess_cmip6.sh"]
@@ -410,11 +327,12 @@ python esgf-query.py
 
 **Salidas generadas:**
 - `cmip6_daily_inventory.xlsx`: Libro Excel con 4 hojas formateadas condicionalmente (`inventory`, `summary`, `selected`, `files`).
-- `cmip6_complete_models.csv`: Lista plana (`NOMBRE.variante`, sin encabezado) de realizaciones 100% completas en período y validadas en GCMEval (36 combinaciones).
+- `cmip6_complete_models.csv`: Lista plana (`NOMBRE.variante`, sin encabezado) de realizaciones 100% completas en período y validadas en GCMEval.
 - `selected_models.csv`: Lista base para alimentar `generate_manifest.py`.
 - `cmip6_daily_inventory.csv`: Inventario general tabular.
 - `cmip6_files.csv`: Catálogo plano de archivos NetCDF.
 - `esgf_raw_datasets.json`: Caché local de metadatos crudos Solr para consultas sin conexión.
+- Reporte de resultados: [`results/etapas/etapa1_inventario_esgf.md`](results/etapas/etapa1_inventario_esgf.md)
 
 ---
 
@@ -429,6 +347,18 @@ python run_evaluation.py
 
 **Opciones disponibles:**
 ```bash
+# Ejecutar evaluación con la configuración por defecto (Centroamérica CAM:6, región secundaria con peso 0.0)
+python run_evaluation.py
+
+# Listar todas las regiones preestablecidas disponibles en GCMEval
+python run_evaluation.py --list-regions
+
+# Evaluar otra región primaria por CLI (ej. Amazonía)
+python run_evaluation.py --region "Amazon [AMZ:7]" -y
+
+# Combinar región primaria y secundaria con pesos personalizados
+python run_evaluation.py --region "CAM" --secondary-region "small islands regions Caribbean" --secondary-weight 0.3 -y
+
 # Instalar automáticamente paquetes de R faltantes
 python run_evaluation.py --install-deps
 
@@ -442,11 +372,12 @@ python run_evaluation.py --models-csv mi_lista_modelos.csv
 **Salidas generadas en el directorio `results/`:**
 - `ranking_E0.csv` a `ranking_E8.csv`: Rankings individuales de los 9 experimentos de sensibilidad.
 - `ranking_summary_all_experiments.csv`: Matriz consolidada de posiciones por experimento.
-- `analysis_stage1_variants.csv`: Estadística descriptiva de todas las 36 variantes evaluadas.
+- `analysis_stage1_variants.csv`: Estadística descriptiva de todas las variantes evaluadas.
 - `analysis_stage2_best_variants.csv`: Selección de la mejor corrida representativa por familia.
-- `analysis_stage3_families.csv`: Clasificación general de las 16 familias de modelos.
+- `analysis_stage3_families.csv`: Clasificación general de las familias de modelos.
 - `future_spread_ssp585_CAM.html`: Gráfico interactivo Plotly con ventanas emergentes interactivas de estadísticas al hacer clic en cada modelo.
 - `future_spread_ssp585_CAM.png`: Gráfico estático de dispersión ($\Delta T$ vs $\Delta P$) en alta resolución (300 DPI).
+- Reporte de resultados: [`results/etapas/etapa2_evaluacion_gcmeval.md`](results/etapas/etapa2_evaluacion_gcmeval.md)
 
 ---
 
@@ -472,6 +403,7 @@ python generate_manifest.py -i selected_models.csv --hist-start 1950 --hist-end 
 - `cmip6_manifest.tsv`: Manifiesto delimitado por tabuladores (TSV) con URLs, checksums SHA256, tamaños de archivo y metadatos.
 - `cmip6_files.csv`: Catálogo CSV detallado de los modelos procesados.
 - `cmip6_urls.txt`: Lista plana de URLs directas para descarga.
+- Reporte de resultados: [`results/etapas/etapa3_manifiesto_descarga.md`](results/etapas/etapa3_manifiesto_descarga.md) (y [`results/etapas/etapa4_descarga_preprocesamiento.md`](results/etapas/etapa4_descarga_preprocesamiento.md) para el Paso 4).
 
 ---
 

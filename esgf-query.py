@@ -1315,6 +1315,13 @@ def main():
         xlsx_file="cmip6_daily_inventory.xlsx",
     )
 
+    try:
+        import results_reporter
+        results_reporter.update_step1_report(".", variables=variables, experiments=experiments)
+        print("[OK] Reporte Markdown Etapa 1 actualizado en: results/etapas/etapa1_inventario_esgf.md")
+    except Exception as e:
+        print(f"[AVISO] No se pudo actualizar el reporte Markdown de la Etapa 1: {e}")
+
     print()
     print("=" * 70)
     print("INVENTARIO ESGF Y CRUCE CON GCMEVAL COMPLETADO")
