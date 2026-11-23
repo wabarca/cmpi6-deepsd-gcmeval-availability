@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Generador automático de reportes Markdown en `results/` y `results/etapas/`.
-Cada paso del pipeline (Etapas 1 a 4) invoca este módulo al finalizar para
+Cada etapa del flujo de trabajo (Etapas 1 a 4) invoca este módulo al finalizar para
 mantener actualizados los reportes con los resultados de la ejecución más reciente.
 """
 
@@ -38,7 +38,7 @@ def update_results_index(repo_root):
     html_name = spread_htmls[0].name if spread_htmls else "future_spread_ssp585_CAM.html"
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    content = f"""# Resultados del Pipeline CMIP6
+    content = f"""# Resultados del Flujo de Trabajo CMIP6
 
 > Última actualización automática: `{now_str}`
 

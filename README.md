@@ -5,7 +5,7 @@ Este repositorio contiene las herramientas automatizadas para:
 2. **Cruzar la disponibilidad** con el catálogo de modelos evaluados en **GCMEval**.
 3. **Extraer URLs HTTPS directas** a nivel de archivo NetCDF (`type=File`), resolviendo réplicas y priorizando nodos de alta velocidad con soporte **Globus** (`*.data.globus.org`).
 4. **Ejecutar un flujo automatizado de descarga y preprocesamiento con CDO**:
-   - **Ejecución Concurrente Asíncrona (Productor-Consumidor)**: Descarga de la variable $N+1$ con `aria2c` en simultáneo con el procesamiento CDO de la variable $N$.
+   - **Ejecución Simultánea (Descarga + Procesamiento)**: Descarga de la variable $N+1$ con `aria2c` en simultáneo con el procesamiento CDO de la variable $N$.
    - **Transferencia Remota Automática por SSH/rsync**: Envío directo de archivos procesados a una PC de almacenamiento (`192.168.4.27:E:\CMIP6\CMIP6_GCMs_Processed\<MODELO>\`) preservando la jerarquía de directorios.
    - **Optimización de Espacio en Disco**: Eliminación inmediata de archivos temporales y locales tras confirmar la transferencia remota.
    - **Reanudación Automática (Resume)**: Detección inteligente de archivos ya procesados en destino local o remoto.
@@ -54,7 +54,7 @@ Este repositorio contiene las herramientas automatizadas para:
 │
 ├── results/                       # Salidas generadas por fase (no sincronizadas con Git)
 │   ├── README.md                  # Índice general de resultados por etapa
-│   ├── etapas/                    # Reportes Markdown detallados por cada paso del pipeline
+│   ├── etapas/                    # Reportes Markdown detallados por cada etapa del flujo de trabajo
 │   │   ├── etapa1_inventario_esgf.md
 │   │   ├── etapa2_evaluacion_gcmeval.md
 │   │   ├── etapa3_manifiesto_descarga.md
@@ -75,7 +75,7 @@ Este repositorio contiene las herramientas automatizadas para:
 
 ## ⚙️ Requisitos y Dependencias
 
-El pipeline integra herramientas en **Python** (consultas ESGF, manifiestos, orquestación), **R** (evaluación y ranking estadístico GCMEval) y **herramientas CLI del sistema** (CDO, aria2c, SSH).
+El flujo de trabajo integra herramientas en **Python** (consultas ESGF, manifiestos, coordinación de pasos), **R** (evaluación y ranking estadístico GCMEval) y **utilidades del sistema** (CDO, aria2c, SSH).
 
 ### 1. Entorno Python (Recomendado vía Mamba / Conda)
 
@@ -100,9 +100,9 @@ Para ejecutar el módulo de evaluación [`gcmeval/run_cmip6_evaluation.R`](file:
   devtools::install("gcmeval/back-end")
   ```
 
-### 3. Herramientas del Sistema (CLI Linux)
+### 3. Utilidades del Sistema (Linux)
 
-El pipeline automatizado de descarga y recorte utiliza:
+El proceso automatizado de descarga y recorte utiliza:
 - **`cdo`** (Climate Data Operators con soporte multi-hilo OpenMP)
 - **`aria2c`** (Gestor de descargas aceleradas multi-conexión y validación de hash)
 - **`rsync`** o **`scp`** + **`ssh`** (Transferencia remota de archivos procesados)
@@ -243,7 +243,7 @@ El paquete `gcmeval` utiliza un archivo interno de datos comprimido `data/statis
 - Región: `CAM:6`, `GL:0`, `WNA:1`, etc.
 - Métricas: Climatología mensual (12 meses), sesgo medio (*Bias*), correlación de Pearson espacial/temporal (*r*), error cuadrático medio (*RMSE*), desviación estándar (*SD*), etc., calculadas respecto a las grillas comunes de referencia (ERA5 a $1^\circ \times 1^\circ$ y GPCP a $2.5^\circ \times 2.5^\circ$).
 
-#### 2. Pipeline de Preprocesamiento con CDO para Nuevos Modelos
+#### 2. Proceso de Preprocesamiento con CDO para Nuevos Modelos
 Para cada nuevo modelo `MODEL` y variante `VAR`:
 
 ```bash
@@ -408,8 +408,8 @@ El script Bash ejecuta el flujo automatizado de alto rendimiento:
 
 1. **Reanudación Inteligente (Resume)**: Verifica si el archivo procesado ya existe en la máquina remota (o local) antes de descargar.
 2. **Descarga Acelerada (`aria2c`)**: Descarga los segmentos temporales de la variable actual con validación SHA256.
-3. **Procesamiento Concurrente Asíncrono (Productor-Consumidor)**:
-   - Lanza el procesamiento CDO de la variable descargada en segundo plano (`process_variable_worker &`).
+3. **Procesamiento Simultáneo en Segundo Plano**:
+   - Inicia el procesamiento CDO de la variable descargada en segundo plano (`process_variable_worker &`).
    - Inicia inmediatamente la descarga con `aria2c` de la siguiente variable, eliminando tiempos muertos de red.
 4. **Recorte Espacial con CDO**: Aplica `sellonlatbox,-120,-40.5,-18.5,43` (Centroamérica ampliada) a cada chunk con multi-hilo OpenMP (`CDO_THREADS=$(nproc)`).
 5. **Concatenación y Selección Temporal**: Une los chunks con `mergetime` y filtra los años según el experimento:
@@ -600,7 +600,7 @@ Cuando un archivo existe replicado en varios nodos (`data_node`), el algoritmo c
 2. **Prioridad 2**: URLs HTTPS seguras de THREDDS (`https://.../thredds/fileServer/...`).
 3. **Prioridad 3**: URLs HTTP estándar de THREDDS (`http://.../thredds/fileServer/...`).
 
-### 3. Procesamiento Concurrente Asíncrono (Productor-Consumidor)
+### 3. Procesamiento Simultáneo en Segundo Plano
 Para maximizar la utilización del ancho de banda y la capacidad de cómputo:
 - El cuello de botella de red y de CPU se desacoplan.
 - Mientras `cdo` procesa los archivos de la variable $N$, `aria2c` descarga los de la variable $N+1$.
