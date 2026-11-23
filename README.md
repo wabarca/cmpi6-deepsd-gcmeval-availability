@@ -173,7 +173,7 @@ flowchart TD
 
 Para garantizar la representatividad y robustez climática de los modelos globales (GCM) seleccionados para el downscaling estadístico (*DeepSD*), se integró el motor analítico de **GCMEval** ([Brunner et al., 2020](https://doi.org/10.5194/esd-11-995-2020)).
 
-Por defecto, la evaluación se configura sobre la región IPCC **`"Central America/Mexico [CAM:6]"`** (configurable en `evaluation_config.yaml` o mediante el asistente de `run_evaluation.py`), utilizando datos observacionales de referencia globales:
+Por defecto, la evaluación se configura sobre la región IPCC **`"Central America/Mexico [CAM:6]"`** como dominio primario y mantiene la **región secundaria desactivada (`weight: 0.0`)** para no influir en el cálculo. Es posible seleccionar cualquiera de las **34 regiones preestablecidas de GCMEval** (y activar opcionalmente una región secundaria ponderada) desde [`evaluation_config.yaml`](evaluation_config.yaml), el asistente interactivo (`--wizard`) o los parámetros CLI de [`run_evaluation.py`](run_evaluation.py). Los datos observacionales de referencia globales soportados son:
 - **Temperatura (`tas`)**: Reanálisis **ERA5** (ECMWF) — también soporta `NCEP`, `CRU`.
 - **Precipitación (`pr`)**: Producto observacional satelital y de estaciones **GPCP v2.3** — también soporta `CHIRPS`, `MSWEP`.
 
@@ -338,7 +338,7 @@ python esgf-query.py
 
 ### Paso 2: Evaluación Climatológica y Selección de Ensamble (`run_evaluation.py`)
 
-Orquesta desde Python la ejecución del motor de evaluación climatológica de GCMEval en R ([`gcmeval/run_cmip6_evaluation.R`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/run_cmip6_evaluation.R)). Detecta automáticamente el ejecutable de R, valida las librerías necesarias y ejecuta los 9 experimentos de sensibilidad (E0 a E8) para Centroamérica:
+Orquesta desde Python la ejecución del motor de evaluación climatológica de GCMEval en R ([`gcmeval/run_cmip6_evaluation.R`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/run_cmip6_evaluation.R)). Detecta automáticamente el ejecutable de R, valida las librerías necesarias y ejecuta los experimentos de sensibilidad configurados (por defecto `E0` a `E8` sobre Centroamérica `CAM:6`, con soporte para cambiar la región primaria o añadir una región secundaria):
 
 **Ejecución desde Python:**
 ```bash
@@ -375,8 +375,8 @@ python run_evaluation.py --models-csv mi_lista_modelos.csv
 - `analysis_stage1_variants.csv`: Estadística descriptiva de todas las variantes evaluadas.
 - `analysis_stage2_best_variants.csv`: Selección de la mejor corrida representativa por familia.
 - `analysis_stage3_families.csv`: Clasificación general de las familias de modelos.
-- `future_spread_ssp585_CAM.html`: Gráfico interactivo Plotly con ventanas emergentes interactivas de estadísticas al hacer clic en cada modelo.
-- `future_spread_ssp585_CAM.png`: Gráfico estático de dispersión ($\Delta T$ vs $\Delta P$) en alta resolución (300 DPI).
+- `future_spread_<escenario>_<REGION>.html`: Gráfico interactivo Plotly (por defecto `future_spread_ssp585_CAM.html`) con ventanas emergentes de estadísticas al hacer clic en cada modelo.
+- `future_spread_<escenario>_<REGION>.png`: Gráfico estático de dispersión ($\Delta T$ vs $\Delta P$) en alta resolución (300 DPI).
 - Reporte de resultados: [`results/etapas/etapa2_evaluacion_gcmeval.md`](results/etapas/etapa2_evaluacion_gcmeval.md)
 
 ---
