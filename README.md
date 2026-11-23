@@ -40,39 +40,34 @@ Este repositorio contiene las herramientas automatizadas para:
 ```text
 .
 ├── esgf-query.py                  # Script principal: consulta ESGF Solr, genera inventario y extrae URLs
-├── generate_manifest.py           # Generador dinámico de manifiestos a partir de un archivo CSV de modelos
-├── selected_models.csv            # Lista de modelos seleccionados para generar manifiestos (formato NOMBRE.variante)
+├── run_evaluation.py              # Orquestador Python de evaluación climatológica GCMEval en R
+├── evaluation_config.yaml         # Configuración de regiones, observaciones, métricas y experimentos
+├── generate_manifest.py           # Generador dinámico de manifiestos a partir de results/selected_models.csv
+├── results_reporter.py            # Generador automático de reportes Markdown en results/etapas/
 ├── download_preprocess_cmip6.sh   # Script Bash: descarga aria2c + procesamiento CDO concurrente + rsync/scp remoto
 ├── run_background.sh              # Gestor de ejecución en segundo plano (start, status, log, stop)
 ├── gcmeval/                       # Módulo analítico y motor de evaluación de GCMEval
-│   ├── run_cmip6_evaluation.R     # Script R principal: ejecuta 9 experimentos, ranking 3 etapas y spread
+│   ├── run_cmip6_evaluation.R     # Script R principal: ejecuta experimentos, ranking 3 etapas y spread
 │   ├── gcmeval_models.csv         # Catálogo de 120 modelos evaluables en GCMEval
 │   ├── back-end/                  # Paquete R gcmeval, funciones estadísticas y datos (statistics.rda)
 │   └── front-end/                 # Aplicación web interactiva Shiny
 │
-├── results/                       # Salidas de evaluación, rankings y reportes en Markdown
+├── results/                       # Salidas generadas por fase (no sincronizadas con Git)
 │   ├── README.md                  # Índice general de resultados por etapa
 │   ├── etapas/                    # Reportes Markdown detallados por cada paso del pipeline
 │   │   ├── etapa1_inventario_esgf.md
 │   │   ├── etapa2_evaluacion_gcmeval.md
 │   │   ├── etapa3_manifiesto_descarga.md
 │   │   └── etapa4_descarga_preprocesamiento.md
+│   ├── cmip6_daily_inventory.xlsx / .csv
+│   ├── cmip6_complete_models.csv  # Listado de realizaciones completas y validadas
+│   ├── selected_models.csv        # Lista final seleccionada para generar manifiestos
+│   ├── cmip6_manifest.tsv / cmip6_files.csv / cmip6_urls.txt
 │   ├── ranking_E0.csv ... E8.csv  # Rankings individuales por cada experimento
-│   ├── ranking_summary_all_experiments.csv # Matriz consolidada de los 9 experimentos
-│   ├── analysis_stage1_variants.csv        # Etapa 1: Estadísticas de las variantes evaluadas
-│   ├── analysis_stage2_best_variants.csv   # Etapa 2: Mejor variante seleccionada por familia
-│   ├── analysis_stage3_families.csv        # Etapa 3: Ranking final de familias
-│   ├── future_spread_data.csv              # Datos de cambio climático proyectado (ΔT y ΔP)
-│   ├── future_spread_ssp585_CAM.png        # Gráfico estático de alta resolución (300 DPI)
-│   └── future_spread_ssp585_CAM.html       # Gráfico interactivo Web / Plotly (estilo Shiny)
+│   ├── ranking_summary_all_experiments.csv
+│   ├── analysis_stage1_variants.csv / stage2 / stage3
+│   └── future_spread_<escenario>_<REGION>.png / .html
 │
-├── cmip6_daily_inventory.xlsx     # Libro Excel (hojas: inventory, summary, selected, files) con columnas de período
-├── cmip6_daily_inventory.csv      # Inventario tabular de datasets
-├── cmip6_complete_models.csv      # Listado de modelos con 100% de disponibilidad (sin encabezado, NOMBRE.variante)
-├── cmip6_files.csv                # Catálogo completo de archivos NetCDF extraídos
-│
-├── cmip6_manifest.tsv             # Manifiesto TSV para automatización de descarga y CDO
-├── cmip6_urls.txt                 # Lista plana de URLs directas para descarga
 └── README.md                      # Documentación completa del flujo de trabajo
 ```
 
@@ -325,13 +320,13 @@ Este script realiza la búsqueda en el índice de MetaGrid (`https://metagrid.es
 python esgf-query.py
 ```
 
-**Salidas generadas:**
-- `cmip6_daily_inventory.xlsx`: Libro Excel con 4 hojas formateadas condicionalmente (`inventory`, `summary`, `selected`, `files`).
-- `cmip6_complete_models.csv`: Lista plana (`NOMBRE.variante`, sin encabezado) de realizaciones 100% completas en período y validadas en GCMEval.
-- `selected_models.csv`: Lista base para alimentar `generate_manifest.py`.
-- `cmip6_daily_inventory.csv`: Inventario general tabular.
-- `cmip6_files.csv`: Catálogo plano de archivos NetCDF.
-- `esgf_raw_datasets.json`: Caché local de metadatos crudos Solr para consultas sin conexión.
+**Salidas generadas en `results/`:**
+- `results/cmip6_daily_inventory.xlsx`: Libro Excel con 4 hojas formateadas condicionalmente (`inventory`, `summary`, `selected`, `files`).
+- `results/cmip6_complete_models.csv`: Lista plana (`NOMBRE.variante`, sin encabezado) de realizaciones 100% completas en período y validadas en GCMEval.
+- `results/selected_models.csv`: Lista base para alimentar `generate_manifest.py` (si no existe aún).
+- `results/cmip6_daily_inventory.csv`: Inventario general tabular.
+- `results/cmip6_files.csv`: Catálogo plano de archivos NetCDF.
+- `results/esgf_raw_datasets.json`: Caché local de metadatos crudos Solr para consultas sin conexión.
 - Reporte de resultados: [`results/etapas/etapa1_inventario_esgf.md`](results/etapas/etapa1_inventario_esgf.md)
 
 ---
@@ -383,9 +378,9 @@ python run_evaluation.py --models-csv mi_lista_modelos.csv
 
 ### Paso 3: Generación Dinámica del Manifiesto (`generate_manifest.py`)
 
-Genera el catálogo y manifiesto estructurado leyendo la lista de modelos seleccionados desde un archivo CSV/texto externo (`selected_models.csv` o `cmip6_complete_models.csv`):
+Genera el catálogo y manifiesto estructurado leyendo la lista de modelos seleccionados desde `results/selected_models.csv` (o un archivo alternativo como `results/cmip6_complete_models.csv`):
 
-**Ejecución básica (usa `selected_models.csv` por defecto):**
+**Ejecución básica (usa `results/selected_models.csv` por defecto):**
 ```bash
 python generate_manifest.py
 ```
@@ -393,16 +388,16 @@ python generate_manifest.py
 **Ejecución personalizada con otro archivo o parámetros:**
 ```bash
 # Usando la lista de todos los modelos completos generados por esgf-query
-python generate_manifest.py -i cmip6_complete_models.csv -o cmip6_manifest.tsv --workers 8
+python generate_manifest.py -i results/cmip6_complete_models.csv -o results/cmip6_manifest.tsv --workers 8
 
 # Especificando períodos temporales personalizados
-python generate_manifest.py -i selected_models.csv --hist-start 1950 --hist-end 2014 --ssp-start 2015 --ssp-end 2100
+python generate_manifest.py -i results/selected_models.csv --hist-start 1950 --hist-end 2014 --ssp-start 2015 --ssp-end 2100
 ```
 
-**Salidas generadas:**
-- `cmip6_manifest.tsv`: Manifiesto delimitado por tabuladores (TSV) con URLs, checksums SHA256, tamaños de archivo y metadatos.
-- `cmip6_files.csv`: Catálogo CSV detallado de los modelos procesados.
-- `cmip6_urls.txt`: Lista plana de URLs directas para descarga.
+**Salidas generadas en `results/`:**
+- `results/cmip6_manifest.tsv`: Manifiesto delimitado por tabuladores (TSV) con URLs, checksums SHA256, tamaños de archivo y metadatos.
+- `results/cmip6_files.csv`: Catálogo CSV detallado de los modelos procesados.
+- `results/cmip6_urls.txt`: Lista plana de URLs directas para descarga.
 - Reporte de resultados: [`results/etapas/etapa3_manifiesto_descarga.md`](results/etapas/etapa3_manifiesto_descarga.md) (y [`results/etapas/etapa4_descarga_preprocesamiento.md`](results/etapas/etapa4_descarga_preprocesamiento.md) para el Paso 4).
 
 ---

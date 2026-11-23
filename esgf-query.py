@@ -58,8 +58,9 @@ SEARCH_ENDPOINTS = [
     "https://esgf.ceda.ac.uk/esg-search/search",
     "https://esgf-node.llnl.gov/esg-search/search",
 ]
-CACHE_FILE_DATASETS = "esgf_raw_datasets.json"
-CACHE_FILE_FILES = "esgf_raw_files.json"
+RESULTS_DIR = "results"
+CACHE_FILE_DATASETS = os.path.join(RESULTS_DIR, "esgf_raw_datasets.json")
+CACHE_FILE_FILES = os.path.join(RESULTS_DIR, "esgf_raw_files.json")
 
 DEFAULT_VARIABLES = [
     "ua",      # Viento zonal
@@ -921,12 +922,13 @@ def validate_files_inventory(files_df, selected_df, unresolved_combinations, exp
 # ---------------------------------------------------------------------
 
 def export_results(df, summary, selected, files_df, variables=DEFAULT_VARIABLES,
-                   csv_inventory="cmip6_daily_inventory.csv",
-                   csv_files="cmip6_files.csv",
-                   csv_complete_models="cmip6_complete_models.csv",
-                   csv_selected_models="selected_models.csv",
-                   xlsx_file="cmip6_daily_inventory.xlsx"):
+                   csv_inventory=os.path.join(RESULTS_DIR, "cmip6_daily_inventory.csv"),
+                   csv_files=os.path.join(RESULTS_DIR, "cmip6_files.csv"),
+                   csv_complete_models=os.path.join(RESULTS_DIR, "cmip6_complete_models.csv"),
+                   csv_selected_models=os.path.join(RESULTS_DIR, "selected_models.csv"),
+                   xlsx_file=os.path.join(RESULTS_DIR, "cmip6_daily_inventory.xlsx")):
     """Exporta inventarios, resúmenes y catálogos en CSV y Excel estilizado."""
+    os.makedirs(RESULTS_DIR, exist_ok=True)
     df.to_csv(csv_inventory, index=False)
     print(f"[OK] Inventario CSV guardado: {csv_inventory}")
 
@@ -1065,7 +1067,7 @@ def export_results(df, summary, selected, files_df, variables=DEFAULT_VARIABLES,
 
         print(f"[OK] Libro Excel guardado exitosamente: {xlsx_file}")
     except PermissionError:
-        alt_xlsx = f"cmip6_daily_inventory_{int(time.time())}.xlsx"
+        alt_xlsx = os.path.join(os.path.dirname(xlsx_file) or RESULTS_DIR, f"cmip6_daily_inventory_{int(time.time())}.xlsx")
         print(f"[ADVERTENCIA] No se pudo escribir '{xlsx_file}' (abierto en Excel). Guardando en '{alt_xlsx}'...")
         export_results(df, summary, selected, files_df, variables, csv_inventory, csv_files, csv_complete_models, csv_selected_models, alt_xlsx)
 
@@ -1308,11 +1310,11 @@ def main():
         selected=selected,
         files_df=files_df,
         variables=variables,
-        csv_inventory="cmip6_daily_inventory.csv",
-        csv_files="cmip6_files.csv",
-        csv_complete_models="cmip6_complete_models.csv",
-        csv_selected_models="selected_models.csv",
-        xlsx_file="cmip6_daily_inventory.xlsx",
+        csv_inventory=os.path.join(RESULTS_DIR, "cmip6_daily_inventory.csv"),
+        csv_files=os.path.join(RESULTS_DIR, "cmip6_files.csv"),
+        csv_complete_models=os.path.join(RESULTS_DIR, "cmip6_complete_models.csv"),
+        csv_selected_models=os.path.join(RESULTS_DIR, "selected_models.csv"),
+        xlsx_file=os.path.join(RESULTS_DIR, "cmip6_daily_inventory.xlsx"),
     )
 
     try:

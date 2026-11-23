@@ -30,9 +30,13 @@ suppressPackageStartupMessages({
   library(ggplot2)
 })
 
-models_csv <- file.path(gcmeval_dir, "cmip6_complete_models.csv")
+models_csv <- file.path(results_dir, "cmip6_complete_models.csv")
 if (!file.exists(models_csv)) {
-  models_csv <- file.path("cmip6_complete_models.csv")
+  if (file.exists("cmip6_complete_models.csv")) {
+    models_csv <- "cmip6_complete_models.csv"
+  } else {
+    models_csv <- file.path(gcmeval_dir, "cmip6_complete_models.csv")
+  }
 }
 
 # 2. Cargar funciones base de GCMEval
@@ -702,12 +706,10 @@ if (reg_tag == "CAM") {
 }
 final_ensemble_df$Rank_Ensamble <- seq_len(nrow(final_ensemble_df))
 
-# Guardar lista final en selected_models.csv (en raíz y en results/)
-root_selected_csv <- file.path(workspace_dir, "selected_models.csv")
+# Guardar lista final en results/selected_models.csv
 results_selected_csv <- file.path(results_dir, "selected_models.csv")
 results_selected_full_csv <- file.path(results_dir, "final_selected_ensemble_10models.csv")
 
-writeLines(final_ensemble_df$Modelo_ESGF, root_selected_csv)
 writeLines(final_ensemble_df$Modelo_ESGF, results_selected_csv)
 write.csv(final_ensemble_df, results_selected_full_csv, row.names = FALSE)
 
@@ -723,5 +725,5 @@ for (i in seq_len(nrow(final_ensemble_df))) {
               r$Rank_Ensamble, r$Familia, r$Modelo_ESGF, r$Mean_Rank, r$SD_Rank, r$Freq_Top10))
 }
 cat(paste(rep("=", 85), collapse=""), "\n")
-cat(sprintf("[OK] Lista final de %d modelos guardada en: %s\n", nrow(final_ensemble_df), root_selected_csv))
+cat(sprintf("[OK] Lista final de %d modelos guardada en: %s\n", nrow(final_ensemble_df), results_selected_csv))
 cat(sprintf("[OK] Manifiesto listo para generarse ejecutando: python generate_manifest.py\n\n"))

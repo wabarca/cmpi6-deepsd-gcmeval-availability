@@ -143,28 +143,28 @@ def main():
     )
     parser.add_argument(
         "-i", "--input-csv",
-        default="selected_models.csv",
-        help="Archivo CSV o texto con la lista de modelos (por defecto: selected_models.csv)"
+        default="results/selected_models.csv",
+        help="Archivo CSV o texto con la lista de modelos (por defecto: results/selected_models.csv)"
     )
     parser.add_argument(
         "-o", "--output-tsv",
-        default="cmip6_manifest.tsv",
-        help="Nombre del manifiesto TSV de salida (por defecto: cmip6_manifest.tsv)"
+        default="results/cmip6_manifest.tsv",
+        help="Nombre del manifiesto TSV de salida (por defecto: results/cmip6_manifest.tsv)"
     )
     parser.add_argument(
         "--output-csv",
-        default="cmip6_files.csv",
-        help="Nombre del catálogo CSV detallado de archivos (por defecto: cmip6_files.csv)"
+        default="results/cmip6_files.csv",
+        help="Nombre del catálogo CSV detallado de archivos (por defecto: results/cmip6_files.csv)"
     )
     parser.add_argument(
         "--output-urls",
-        default="cmip6_urls.txt",
-        help="Nombre de la lista plana de URLs (por defecto: cmip6_urls.txt)"
+        default="results/cmip6_urls.txt",
+        help="Nombre de la lista plana de URLs (por defecto: results/cmip6_urls.txt)"
     )
     parser.add_argument(
         "--cache-file",
-        default="esgf_raw_files.json",
-        help="Ruta al archivo JSON de caché de metadatos de archivos (por defecto: esgf_raw_files.json)"
+        default="results/esgf_raw_files.json",
+        help="Ruta al archivo JSON de caché de metadatos de archivos (por defecto: results/esgf_raw_files.json)"
     )
     parser.add_argument(
         "--force-refresh",
@@ -229,7 +229,10 @@ def main():
     print()
 
     # 1. Cargar modelos desde el archivo
-    selected_df = load_models_from_file(args.input_csv)
+    input_csv_path = args.input_csv
+    if not os.path.exists(input_csv_path) and os.path.exists(os.path.basename(input_csv_path)):
+        input_csv_path = os.path.basename(input_csv_path)
+    selected_df = load_models_from_file(input_csv_path)
     print(f"[OK] Se cargaron {len(selected_df)} modelos/realizaciones desde '{args.input_csv}':")
     for idx, row in selected_df.iterrows():
         print(f"   {idx + 1:2d}. {row['source_id']}.{row['variant_label']}")
@@ -252,6 +255,10 @@ def main():
         sys.exit(1)
 
     # 4. Guardar Catálogo CSV
+    for out_p in (args.output_csv, args.output_tsv, args.output_urls):
+        out_dir = os.path.dirname(out_p)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
     files_df.to_csv(args.output_csv, index=False)
     print(f"[OK] Catálogo CSV guardado: {args.output_csv} ({len(files_df):,} archivos)")
 

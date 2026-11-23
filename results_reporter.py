@@ -57,10 +57,15 @@ Este directorio centraliza todas las salidas numéricas, gráficas y reportes en
 
 
 def update_step1_report(repo_root, variables=None, experiments=None):
-    """Actualiza results/etapas/etapa1_inventario_esgf.md a partir de los CSV generados."""
-    root, _, etapas_dir = _ensure_dirs(repo_root)
-    inv_rows = _read_csv_dicts(root / "cmip6_daily_inventory.csv")
-    complete_path = root / "cmip6_complete_models.csv"
+    """Actualiza results/etapas/etapa1_inventario_esgf.md a partir de los CSV generados en results/."""
+    root, results_dir, etapas_dir = _ensure_dirs(repo_root)
+    inv_path = results_dir / "cmip6_daily_inventory.csv"
+    if not inv_path.is_file():
+        inv_path = root / "cmip6_daily_inventory.csv"
+    inv_rows = _read_csv_dicts(inv_path)
+    complete_path = results_dir / "cmip6_complete_models.csv"
+    if not complete_path.is_file():
+        complete_path = root / "cmip6_complete_models.csv"
     complete_models = []
     if complete_path.is_file():
         complete_models = [
@@ -93,10 +98,10 @@ def update_step1_report(repo_root, variables=None, experiments=None):
         "",
         "| Indicador | Valor Registrado | Archivo de Respaldo |",
         "|:---|---:|:---|",
-        f"| Combinaciones totales inventariadas en ESGF | **{len(inv_rows):,}** | [`cmip6_daily_inventory.csv`](../../cmip6_daily_inventory.csv) |",
-        f"| Realizaciones 100% completas y validadas en GCMEval | **{len(complete_models):,}** | [`cmip6_complete_models.csv`](../../cmip6_complete_models.csv) |",
+        f"| Combinaciones totales inventariadas en ESGF | **{len(inv_rows):,}** | [`cmip6_daily_inventory.csv`](../cmip6_daily_inventory.csv) |",
+        f"| Realizaciones 100% completas y validadas en GCMEval | **{len(complete_models):,}** | [`cmip6_complete_models.csv`](../cmip6_complete_models.csv) |",
         f"| Familias de modelos únicas representadas | **{len(by_family):,}** | — |",
-        "| Libro Excel consolidado | 4 hojas (`inventory`, `summary`, `selected`, `files`) | [`cmip6_daily_inventory.xlsx`](../../cmip6_daily_inventory.xlsx) |",
+        "| Libro Excel consolidado | 4 hojas (`inventory`, `summary`, `selected`, `files`) | [`cmip6_daily_inventory.xlsx`](../cmip6_daily_inventory.xlsx) |",
         "",
         "---",
         "",
@@ -243,7 +248,7 @@ def update_step2_report(repo_root, config=None):
         "",
         f"## 4. Ranking Final Ganador: Ensamble Seleccionado ({len(ensemble_rows)} Modelos)",
         "",
-        "Exportado a [`final_selected_ensemble_10models.csv`](../final_selected_ensemble_10models.csv) y [`selected_models.csv`](../../selected_models.csv):",
+        "Exportado a [`final_selected_ensemble_10models.csv`](../final_selected_ensemble_10models.csv) y [`selected_models.csv`](../selected_models.csv):",
         "",
         "| Posición Ensamble | Rank Familia | Familia | Realización (`NOMBRE.variante` ESGF) | Mean Rank | SD Rank | Frec. Top 10 |",
         "|:---:|:---:|:---|:---|---:|---:|:---:|",
@@ -270,11 +275,13 @@ def update_step2_report(repo_root, config=None):
     update_results_index(root)
 
 
-def update_step3_report(repo_root, manifest_path="cmip6_manifest.tsv", input_csv="selected_models.csv", period_ranges=None):
+def update_step3_report(repo_root, manifest_path="results/cmip6_manifest.tsv", input_csv="results/selected_models.csv", period_ranges=None):
     """Actualiza results/etapas/etapa3_manifiesto_descarga.md a partir del manifiesto TSV generado."""
-    root, _, etapas_dir = _ensure_dirs(repo_root)
+    root, results_dir, etapas_dir = _ensure_dirs(repo_root)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     m_path = root / manifest_path if not Path(manifest_path).is_absolute() else Path(manifest_path)
+    if not m_path.is_file() and (results_dir / Path(manifest_path).name).is_file():
+        m_path = results_dir / Path(manifest_path).name
 
     total_files = 0
     combos = set()
@@ -300,7 +307,7 @@ def update_step3_report(repo_root, manifest_path="cmip6_manifest.tsv", input_csv
         "",
         f"> Actualizado automáticamente: `{now_str}`",
         "",
-        f"Manifiesto generado a partir de [`{Path(input_csv).name}`](../../{Path(input_csv).name}).",
+        f"Manifiesto generado a partir de [`{Path(input_csv).name}`](../{Path(input_csv).name}).",
         "",
         "---",
         "",
@@ -308,9 +315,9 @@ def update_step3_report(repo_root, manifest_path="cmip6_manifest.tsv", input_csv
         "",
         "| Artefacto | Contenido | Total de Registros | Archivo |",
         "|:---|:---|---:|:---|",
-        f"| Manifiesto técnico TSV | Metadatos, `replica_urls`, checksums SHA-256 y tamaños | **{total_files:,}** archivos NetCDF | [`{m_path.name}`](../../{m_path.name}) |",
-        f"| Catálogo CSV de archivos | Detalle tabular de archivos NetCDF | **{total_files:,}** archivos NetCDF | [`cmip6_files.csv`](../../cmip6_files.csv) |",
-        f"| Lista plana de URLs | Enlaces directos HTTPS para descarga | **{total_files:,}** URLs | [`cmip6_urls.txt`](../../cmip6_urls.txt) |",
+        f"| Manifiesto técnico TSV | Metadatos, `replica_urls`, checksums SHA-256 y tamaños | **{total_files:,}** archivos NetCDF | [`{m_path.name}`](../{m_path.name}) |",
+        f"| Catálogo CSV de archivos | Detalle tabular de archivos NetCDF | **{total_files:,}** archivos NetCDF | [`cmip6_files.csv`](../cmip6_files.csv) |",
+        f"| Lista plana de URLs | Enlaces directos HTTPS para descarga | **{total_files:,}** URLs | [`cmip6_urls.txt`](../cmip6_urls.txt) |",
         "",
         "---",
         "",

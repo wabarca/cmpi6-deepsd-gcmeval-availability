@@ -39,14 +39,16 @@ set -euo pipefail
 # 1. Configuración General y Parámetros
 # ------------------------------------------------------------------------------
 
-# Archivo de manifiesto TSV (por defecto cmip6_manifest.tsv o cmip6_manifest_10_models.tsv)
+# Archivo de manifiesto TSV (por defecto results/cmip6_manifest.tsv)
 if [ -z "${MANIFEST:-}" ]; then
-    if [ -f "cmip6_manifest.tsv" ]; then
+    if [ -f "results/cmip6_manifest.tsv" ]; then
+        MANIFEST="results/cmip6_manifest.tsv"
+    elif [ -f "cmip6_manifest.tsv" ]; then
         MANIFEST="cmip6_manifest.tsv"
-    elif [ -f "cmip6_manifest_10_models.tsv" ]; then
-        MANIFEST="cmip6_manifest_10_models.tsv"
+    elif [ -f "results/cmip6_manifest_10_models.tsv" ]; then
+        MANIFEST="results/cmip6_manifest_10_models.tsv"
     else
-        MANIFEST="cmip6_manifest.tsv"
+        MANIFEST="results/cmip6_manifest.tsv"
     fi
 fi
 
