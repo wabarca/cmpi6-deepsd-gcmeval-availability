@@ -6,7 +6,7 @@ Este repositorio contiene las herramientas automatizadas para:
 3. **Extraer URLs HTTPS directas** a nivel de archivo NetCDF (`type=File`), resolviendo réplicas y priorizando nodos de alta velocidad con soporte **Globus** (`*.data.globus.org`).
 4. **Ejecutar un flujo automatizado de descarga y preprocesamiento con CDO**:
    - **Ejecución Simultánea (Descarga + Procesamiento)**: Descarga de la variable $N+1$ con `aria2c` en simultáneo con el procesamiento CDO de la variable $N$.
-   - **Transferencia Remota Automática por SSH/rsync**: Envío directo de archivos procesados a una PC de almacenamiento (`192.168.4.27:E:\CMIP6\CMIP6_GCMs_Processed\<MODELO>\`) preservando la jerarquía de directorios.
+   - **Transferencia Remota Automática por SSH/rsync**: Envío directo de archivos procesados a una PC de almacenamiento remoto (`<IP_SERVIDOR>:<RUTA_DESTINO>/<MODELO>/`) preservando la jerarquía de directorios.
    - **Optimización de Espacio en Disco**: Eliminación inmediata de archivos temporales y locales tras confirmar la transferencia remota.
    - **Reanudación Automática (Resume)**: Detección inteligente de archivos ya procesados en destino local o remoto.
    - **Ejecución Persistente en Segundo Plano**: Soporte para servidores remotos y WSL2 sin interrupciones por cierre de sesión.
@@ -89,7 +89,7 @@ mamba activate climate
 
 ### 2. Entorno R (Versión 4.4+) y Librerías de GCMEval
 
-Para ejecutar el módulo de evaluación [`gcmeval/run_cmip6_evaluation.R`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/run_cmip6_evaluation.R) y generar los gráficos interactivos:
+Para ejecutar el módulo de evaluación [`gcmeval/run_cmip6_evaluation.R`](gcmeval/run_cmip6_evaluation.R) y generar los gráficos interactivos:
 
 - **R Base**: R >= 4.4.0 instalado (`Rscript`).
 - **Paquetes de R necesarios**:
@@ -142,7 +142,7 @@ flowchart TD
 2. **Nivel 2: Criterio de Disponibilidad Técnica y Cobertura Temporal:**
    * Filtra las realizaciones que poseen publicadas **las 10 variables diarias en los 5 experimentos requeridos** (`historical` y los 4 SSPs), garantizando que cubran el **100% de los años requeridos** (`1950/1980-2014` para historical y `2015-2100` para SSPs).
 3. **Nivel 3: Subconjunto Validado en GCMEval:**
-   * Cruza la lista resultante contra el catálogo objetivo de **GCMEval** ([`gcmeval/gcmeval_models.csv`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/gcmeval_models.csv)), seleccionando el subconjunto de realizaciones que cuentan con evaluación climática y respaldo metodológico.
+   * Cruza la lista resultante contra el catálogo objetivo de **GCMEval** ([`gcmeval/gcmeval_models.csv`](gcmeval/gcmeval_models.csv)), seleccionando el subconjunto de realizaciones que cuentan con evaluación climática y respaldo metodológico.
 
 > **Resultados obtenidos**: Consulta el detalle completo del inventario y las realizaciones seleccionadas en [`results/etapas/etapa1_inventario_esgf.md`](results/etapas/etapa1_inventario_esgf.md). La lista operativa final para descarga se gestiona en [`selected_models.csv`](selected_models.csv).
 
@@ -300,8 +300,8 @@ flowchart TD
         H -->|sellonlatbox + mergetime + selyear| J["Archivo NetCDF Final"]
     end
     
-    subgraph PC2["PC de Almacenamiento 192.168.4.27"]
-        J -->|Transferencia SSH scp / rsync| K["E:/CMIP6/CMIP6_GCMs_Processed/MODELO/"]
+    subgraph PC2["PC de Almacenamiento Remoto"]
+        J -->|Transferencia SSH scp / rsync| K["<RUTA_DESTINO>/MODELO/"]
     end
     
     K -->|Confirmacion de Transferencia| L["Limpieza Automatica de Disco en PC1"]
@@ -333,7 +333,7 @@ python esgf-query.py
 
 ### Paso 2: Evaluación Climatológica y Selección de Ensamble (`run_evaluation.py`)
 
-Orquesta desde Python la ejecución del motor de evaluación climatológica de GCMEval en R ([`gcmeval/run_cmip6_evaluation.R`](file:///c:/Users/wabarca/OneDrive/Workspace/climate/escenarios-centroamerica/fase_3/deepsd-downscaling/model-evaluation/gcmeval/run_cmip6_evaluation.R)). Detecta automáticamente el ejecutable de R, valida las librerías necesarias y ejecuta los experimentos de sensibilidad configurados (por defecto `E0` a `E8` sobre Centroamérica `CAM:6`, con soporte para cambiar la región primaria o añadir una región secundaria):
+Orquesta desde Python la ejecución del motor de evaluación climatológica de GCMEval en R ([`gcmeval/run_cmip6_evaluation.R`](gcmeval/run_cmip6_evaluation.R)). Detecta automáticamente el ejecutable de R, valida las librerías necesarias y ejecuta los experimentos de sensibilidad configurados (por defecto `E0` a `E8` sobre Centroamérica `CAM:6`, con soporte para cambiar la región primaria o añadir una región secundaria):
 
 **Ejecución desde Python:**
 ```bash
@@ -415,7 +415,7 @@ El script Bash ejecuta el flujo automatizado de alto rendimiento:
 5. **Concatenación y Selección Temporal**: Une los chunks con `mergetime` y filtra los años según el experimento:
    - `historical`: `1950/2014`
    - Escenarios SSP (`ssp126`, `ssp245`, `ssp370`, `ssp585`): `2015/2100`
-6. **Transferencia Remota Automática**: Envía el archivo resultante vía `rsync` (o `scp`) a `192.168.4.27:E:/CMIP6/CMIP6_GCMs_Processed/<MODELO>/`.
+6. **Transferencia Remota Automática**: Envía el archivo resultante vía `rsync` (o `scp`) a `<USUARIO>@<IP_SERVIDOR>:<RUTA_DESTINO>/<MODELO>/`.
 7. **Limpieza Inmediata de Disco**: Tras confirmar la transferencia, elimina los archivos brutos y procesados locales, manteniendo la PC de descarga siempre con espacio libre.
 
 **Ejecución estándar:**
@@ -429,9 +429,10 @@ chmod +x download_preprocess_cmip6.sh
 
 **Personalización de variables de entorno:**
 ```bash
-# Ejemplo: cambiar host remoto, hilos de CDO o ancho de banda
-REMOTE_HOST="192.168.4.27" \
-REMOTE_DEST_DIR="E:/CMIP6/CMIP6_GCMs_Processed" \
+# Ejemplo: cambiar host remoto, usuario, hilos de CDO o ancho de banda
+REMOTE_HOST="<IP_SERVIDOR>" \
+REMOTE_USER="<USUARIO>" \
+REMOTE_DEST_DIR="/ruta/CMIP6_GCMs_Processed" \
 CDO_THREADS=16 \
 MAX_DOWNLOAD_LIMIT=0 \
 ./download_preprocess_cmip6.sh
@@ -441,13 +442,13 @@ MAX_DOWNLOAD_LIMIT=0 \
 
 ## 🔑 Configuración de Transferencia Remota (SSH sin contraseña)
 
-Para que el script pueda transferir automáticamente los archivos a la PC de almacenamiento (`192.168.4.27`) con el usuario de dominio `AMBIENTE\wabarca` sin pedir contraseña en cada variable:
+Para que el script pueda transferir automáticamente los archivos a la PC de almacenamiento remoto (`<IP_SERVIDOR>`) con el usuario correspondiente (`<USUARIO>`) sin pedir contraseña en cada variable:
 
 1. **Configurar el cliente SSH en la PC de descarga (`~/.ssh/config`):**
    Agrega las siguientes líneas a tu archivo `~/.ssh/config`:
    ```text
-   Host 192.168.4.27
-       User AMBIENTE\wabarca
+   Host <IP_SERVIDOR>
+       User <USUARIO>
        Port 22
    ```
 
@@ -458,12 +459,12 @@ Para que el script pueda transferir automáticamente los archivos a la PC de alm
 
 3. **Copiar la clave pública a la PC de almacenamiento Windows:**
    - La clave pública (`~/.ssh/id_ed25519.pub`) debe agregarse al archivo:
-     - Si el usuario `wabarca` es usuario estándar: `C:\Users\wabarca\.ssh\authorized_keys`
-     - Si el usuario `wabarca` pertenece al grupo Administradores: `C:\ProgramData\ssh\administrators_authorized_keys` (con permisos de lectura exclusivos para SYSTEM y Administrators).
+     - Si el usuario es estándar: `C:\Users\<USUARIO>\.ssh\authorized_keys`
+     - Si el usuario pertenece al grupo Administradores: `C:\ProgramData\ssh\administrators_authorized_keys` (con permisos de lectura exclusivos para SYSTEM y Administrators).
 
 4. **Verificar la conexión:**
    ```bash
-   ssh "AMBIENTE\wabarca@192.168.4.27" "echo Conexión exitosa"
+   ssh "<USUARIO>@<IP_SERVIDOR>" "echo Conexión exitosa"
    ```
 
 ---
@@ -561,10 +562,10 @@ wsl -d Ubuntu --exec bash -c "cd /ruta/de/tu/proyecto && ./run_background.sh sta
 
 ## 📁 Estructura de Salida
 
-En la PC de almacenamiento (`192.168.4.27` en `E:\CMIP6\CMIP6_GCMs_Processed\`), los archivos procesados se organizan en subcarpetas por cada modelo:
+En la PC de almacenamiento remoto (`<RUTA_DESTINO>`), los archivos procesados se organizan en subcarpetas por cada modelo:
 
 ```text
-E:\CMIP6\CMIP6_GCMs_Processed\
+<RUTA_DESTINO>/
 ├── ACCESS-CM2\
 │   ├── hur_day_ACCESS-CM2_historical_r1i1p1f1_19500101-20141231.nc
 │   ├── hur_day_ACCESS-CM2_ssp126_r1i1p1f1_20150101-21001231.nc
@@ -610,5 +611,5 @@ Para maximizar la utilización del ancho de banda y la capacidad de cómputo:
 
 ## 👤 Autor
 
-- **Will Abarca** (`wabarca@ambiente.gob.sv`)
+- **Will Abarca**
 - Ministerio de Medio Ambiente y Recursos Naturales (MARN), El Salvador.
