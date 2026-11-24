@@ -59,8 +59,9 @@ SEARCH_ENDPOINTS = [
     "https://esgf-node.llnl.gov/esg-search/search",
 ]
 RESULTS_DIR = "results"
-CACHE_FILE_DATASETS = os.path.join(RESULTS_DIR, "esgf_raw_datasets.json")
-CACHE_FILE_FILES = os.path.join(RESULTS_DIR, "esgf_raw_files.json")
+CACHE_DIR = "cache"
+CACHE_FILE_DATASETS = os.path.join(CACHE_DIR, "esgf_raw_datasets.json")
+CACHE_FILE_FILES = os.path.join(CACHE_DIR, "esgf_raw_files.json")
 
 DEFAULT_VARIABLES = [
     "ua",      # Viento zonal
@@ -317,6 +318,9 @@ def download_all_raw_datasets(experiments, variables, session=None, cache_path=C
 
     # Guardar en caché JSON
     try:
+        cache_dir = os.path.dirname(cache_path)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump(raw_data, f)
         print(f"[OK] Caché de metadatos guardado exitosamente: '{cache_path}'")
@@ -773,6 +777,9 @@ def build_files_inventory(selected_df, experiments=DEFAULT_EXPERIMENTS, variable
                     seen_files.add(fid)
                     merged_cache.append(r)
             try:
+                c_dir = os.path.dirname(cache_file)
+                if c_dir:
+                    os.makedirs(c_dir, exist_ok=True)
                 with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump(merged_cache, f, indent=2)
                 size_mb = os.path.getsize(cache_file) / (1024.0 * 1024.0)

@@ -52,6 +52,10 @@ Este repositorio contiene las herramientas automatizadas para:
 │   ├── back-end/                  # Paquete R gcmeval, funciones estadísticas y datos (statistics.rda)
 │   └── front-end/                 # Aplicación web interactiva Shiny
 │
+├── cache/                         # Caché local de consultas ESGF (no sincronizada con Git)
+│   ├── esgf_raw_datasets.json     # Metadatos crudos de datasets ESGF
+│   └── esgf_raw_files.json        # Metadatos crudos de archivos NetCDF ESGF
+│
 ├── results/                       # Salidas generadas por fase (no sincronizadas con Git)
 │   ├── README.md                  # Índice general de resultados por etapa
 │   ├── etapas/                    # Reportes Markdown detallados por cada etapa del flujo de trabajo
@@ -326,7 +330,7 @@ python esgf-query.py
 - `results/selected_models.csv`: Lista base para alimentar `generate_manifest.py` (si no existe aún).
 - `results/cmip6_daily_inventory.csv`: Inventario general tabular.
 - `results/cmip6_files.csv`: Catálogo plano de archivos NetCDF.
-- `results/esgf_raw_datasets.json`: Caché local de metadatos crudos Solr para consultas sin conexión.
+- `cache/esgf_raw_datasets.json`: Caché local de metadatos crudos Solr para consultas sin conexión (separada de `results/` para conservarla o limpiarla de forma independiente).
 - Reporte de resultados: [`results/etapas/etapa1_inventario_esgf.md`](results/etapas/etapa1_inventario_esgf.md)
 
 ---

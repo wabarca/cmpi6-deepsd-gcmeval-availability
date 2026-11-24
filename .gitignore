@@ -66,6 +66,7 @@ esgf_raw_files.json
 
 # Evaluation & pipeline results (local only, not synced)
 results/
+cache/
 
 # Local secrets and environment files
 .env

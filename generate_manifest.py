@@ -163,8 +163,8 @@ def main():
     )
     parser.add_argument(
         "--cache-file",
-        default="results/esgf_raw_files.json",
-        help="Ruta al archivo JSON de caché de metadatos de archivos (por defecto: results/esgf_raw_files.json)"
+        default="cache/esgf_raw_files.json",
+        help="Ruta al archivo JSON de caché de metadatos de archivos (por defecto: cache/esgf_raw_files.json)"
     )
     parser.add_argument(
         "--force-refresh",
