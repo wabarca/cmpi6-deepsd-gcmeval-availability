@@ -316,7 +316,7 @@ flowchart TD
 ### Paso 1: Inventario Global y Extracción de URLs (`esgf-query.py`)
 
 Este script realiza la búsqueda en el índice de MetaGrid (`https://metagrid.esgf-west.org/proxy/search`):
-- **Fase 1**: Evalúa la disponibilidad a nivel de dataset para las 10 variables y 5 experimentos, consolida el resumen por modelo y realiza el cruce con `gcmeval_models.csv`.
+- **Fase 1**: Evalúa la disponibilidad a nivel de dataset para las 10 variables y 5 experimentos, consolida el resumen por modelo y realiza el cruce con `gcmeval/gcmeval_models.csv` (sincronizándolo automáticamente desde `gcmeval/back-end/data/` si `Rscript` está disponible).
 - **Fase 2**: Para los modelos seleccionados, consulta a nivel de archivo (`type=File`), resuelve réplicas priorizando URLs Globus HTTPS (`*.data.globus.org`) y extrae los enlaces directos y hashes SHA256.
 
 **Ejecución:**

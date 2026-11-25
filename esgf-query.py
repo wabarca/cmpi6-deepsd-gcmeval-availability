@@ -29,6 +29,9 @@ import sys
 import json
 import time
 import re
+import glob
+import shutil
+import subprocess
 import argparse
 from urllib.parse import quote
 from collections import defaultdict
@@ -203,6 +206,86 @@ def build_metagrid_url(source_id, variant_label, experiments, variables):
 # ---------------------------------------------------------------------
 # Manejo de GCMEval
 # ---------------------------------------------------------------------
+
+def _find_rscript():
+    """Localiza el ejecutable Rscript en PATH o rutas estándar de Windows/Linux."""
+    exe = shutil.which("Rscript")
+    if exe:
+        return exe
+    for pattern in [
+        r"C:\Program Files\R\R-*\bin\Rscript.exe",
+        r"C:\Program Files\R\R-*\bin\x64\Rscript.exe",
+        "/usr/bin/Rscript",
+        "/usr/local/bin/Rscript",
+    ]:
+        matches = sorted(glob.glob(pattern), reverse=True)
+        if matches and os.path.isfile(matches[0]):
+            return matches[0]
+    return None
+
+
+def sync_gcmeval_models_csv(target_csv=os.path.join("gcmeval", "gcmeval_models.csv")):
+    """
+    Sincroniza gcmeval/gcmeval_models.csv directamente desde los archivos .rda
+    de gcmeval/back-end/data/ si Rscript está disponible; si no, conserva el CSV local.
+    """
+    meta_rda = os.path.join("gcmeval", "back-end", "data", "meta.rda")
+    stats_rda = os.path.join("gcmeval", "back-end", "data", "statistics.rda")
+    if not (os.path.isfile(meta_rda) and os.path.isfile(stats_rda)):
+        return False
+
+    rscript = _find_rscript()
+    if not rscript:
+        return False
+
+    r_expr = (
+        'load("gcmeval/back-end/data/meta.rda"); '
+        'load("gcmeval/back-end/data/statistics.rda"); '
+        'm6 <- meta[grepl("CMIP6", meta$project_id), ]; '
+        'ids <- unique(m6$gcm.i[!is.na(m6$gcm.i)]); '
+        'exps <- intersect(names(statistics$tas), names(statistics$pr)); '
+        'exps <- exps[grepl("^ssp", exps)]; '
+        'valid <- character(0); '
+        'for (e in exps) { '
+        '  t_p <- Reduce(intersect, lapply(statistics$tas[[e]], names)); '
+        '  p_p <- Reduce(intersect, lapply(statistics$pr[[e]], names)); '
+        '  valid <- union(valid, intersect(t_p, p_p)); '
+        '}; '
+        'g <- intersect(ids, valid); '
+        'g_clean <- gsub("_", "-", sub("^CMIP6\\\\.", "", g)); '
+        'cat(sort(unique(g_clean)), sep="\\n")'
+    )
+    try:
+        res = subprocess.run(
+            [rscript, "-e", r_expr],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+        if res.returncode != 0:
+            return False
+        models = sorted({ln.strip() for ln in res.stdout.splitlines() if ln.strip() and "." in ln})
+        if not models:
+            return False
+
+        existing = []
+        if os.path.isfile(target_csv):
+            with open(target_csv, "r", encoding="utf-8", errors="replace") as f:
+                existing = sorted({ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")})
+
+        if models != existing:
+            os.makedirs(os.path.dirname(target_csv) or ".", exist_ok=True)
+            with open(target_csv, "w", encoding="utf-8", newline="\n") as f:
+                f.write("\n".join(models) + "\n")
+            print(f"[OK] Catálogo GCMEval actualizado automáticamente: {target_csv} ({len(models)} modelos)")
+        else:
+            print(f"[OK] Catálogo GCMEval verificado al día ({len(models)} modelos en {target_csv}).")
+        return True
+    except Exception:
+        return False
+
 
 def locate_gcmeval_file():
     """Busca el archivo gcmeval_models.csv en las rutas estándar."""
@@ -1238,7 +1321,8 @@ def main():
     print(f"Modelos únicos identificados : {stats['unique_models']:,}")
     print("=" * 70)
 
-    # 4. Cruce y Validación con GCMEval
+    # 4. Cruce y Validación con GCMEval (sincroniza automáticamente si Rscript está disponible)
+    sync_gcmeval_models_csv()
     gcmeval_set, gcmeval_path = load_gcmeval_models(gcmeval_file)
     summary = build_summary(df, experiments, variables, gcmeval_set=gcmeval_set)
 
