@@ -401,17 +401,218 @@ process_variable_worker() {
 }
 
 # ------------------------------------------------------------------------------
-# 6. Pipeline Principal Pipelined (Descarga N+1 en paralelo con Procesamiento N)
+# 6. Listado, Filtros CLI y Menú Interactivo (Todo / Individual)
+# ------------------------------------------------------------------------------
+
+LIST_ONLY=false
+NON_INTERACTIVE=false
+FILTER_MODELS=""
+FILTER_EXPS=""
+FILTER_VARS=""
+
+print_usage() {
+    cat <<EOF
+Uso: ./download_preprocess_cmip6.sh [OPCIONES]
+
+Opciones:
+  --list                 Muestra el listado de modelos, experimentos y variables del manifiesto y sale.
+  -y, --yes              Ejecuta directamente sin menú interactivo (ideal para segundo plano).
+  --model <lista>        Filtra por modelo(s) separados por coma (ej. "NorESM2-MM,EC-Earth3").
+  --exp <lista>          Filtra por experimento(s) separados por coma (ej. "historical,ssp585").
+  --var <lista>          Filtra por variable(s) separadas por coma (ej. "pr,tasmax,tasmin").
+  --manifest <ruta>      Especifica un archivo de manifiesto TSV alternativo.
+  -h, --help             Muestra esta ayuda y sale.
+EOF
+}
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --list)
+                LIST_ONLY=true
+                shift
+                ;;
+            -y|--yes|--non-interactive)
+                NON_INTERACTIVE=true
+                shift
+                ;;
+            --model)
+                FILTER_MODELS="${2:-}"
+                shift 2
+                ;;
+            --exp)
+                FILTER_EXPS="${2:-}"
+                shift 2
+                ;;
+            --var)
+                FILTER_VARS="${2:-}"
+                shift 2
+                ;;
+            --manifest)
+                MANIFEST="${2:-}"
+                shift 2
+                ;;
+            -h|--help)
+                print_usage
+                exit 0
+                ;;
+            *)
+                echo "[ERROR] Opción desconocida: $1"
+                print_usage
+                exit 1
+                ;;
+        esac
+    done
+}
+
+filter_combos() {
+    local m_filter="$1"
+    local e_filter="$2"
+    local v_filter="$3"
+
+    tail -n +2 "$MANIFEST" | tr -d '\r' | awk -F'\t' \
+        -v mf="$m_filter" -v ef="$e_filter" -v vf="$v_filter" '
+        BEGIN {
+            if (mf != "") { n=split(mf, a, ","); for (i=1; i<=n; i++) { gsub(/^ +| +$/, "", a[i]); m_sel[tolower(a[i])]=1 } }
+            if (ef != "") { n=split(ef, b, ","); for (i=1; i<=n; i++) { gsub(/^ +| +$/, "", b[i]); e_sel[tolower(b[i])]=1 } }
+            if (vf != "") { n=split(vf, c, ","); for (i=1; i<=n; i++) { gsub(/^ +| +$/, "", c[i]); v_sel[tolower(c[i])]=1 } }
+        }
+        {
+            full = tolower($1 "." $2)
+            src  = tolower($1)
+            exp  = tolower($3)
+            var  = tolower($4)
+            ok_m = (mf == "" || (full in m_sel) || (src in m_sel))
+            ok_e = (ef == "" || (exp in e_sel))
+            ok_v = (vf == "" || (var in v_sel))
+            if (ok_m && ok_e && ok_v) {
+                print $1 "\t" $2 "\t" $3 "\t" $4
+            }
+        }' | sort -u
+}
+
+print_manifest_catalog() {
+    mapfile -t MODEL_SUMMARY < <(printf '%s\n' "${COMBOS[@]}" | awk -F'\t' '
+        {
+            k = $1 "." $2
+            cnt[k]++
+            exps[$3] = 1
+            vars[$4] = 1
+        }
+        END {
+            for (k in cnt) printf "%s\t%d\n", k, cnt[k]
+        }' | sort)
+
+    local exps_list vars_list
+    exps_list=$(printf '%s\n' "${COMBOS[@]}" | awk -F'\t' '{print $3}' | sort -u | paste -sd ", " -)
+    vars_list=$(printf '%s\n' "${COMBOS[@]}" | awk -F'\t' '{print $4}' | sort -u | paste -sd ", " -)
+
+    echo " MODELOS A DESCARGAR (${#MODEL_SUMMARY[@]} modelos | ${#COMBOS[@]} combinaciones):"
+    local i=1
+    for item in "${MODEL_SUMMARY[@]}"; do
+        IFS=$'\t' read -r m_full m_cnt <<< "$item"
+        printf "   [%2d] %-26s (%d combinaciones)\n" "$i" "$m_full" "$m_cnt"
+        i=$((i + 1))
+    done
+    echo ""
+    echo " Experimentos : ${exps_list:-Ninguno}"
+    echo " Variables    : ${vars_list:-Ninguna}"
+    echo "======================================================================"
+    echo ""
+}
+
+# ------------------------------------------------------------------------------
+# 7. Pipeline Principal Pipelined (Descarga N+1 en paralelo con Procesamiento N)
 # ------------------------------------------------------------------------------
 
 main() {
-    check_dependencies
+    parse_args "$@"
 
     if [ ! -f "$MANIFEST" ]; then
         echo "[ERROR] No se encontró el archivo de manifiesto '$MANIFEST'."
-        echo "Asegúrate de ejecutar primero: python generate_manifest_10.py"
+        echo "Asegúrate de ejecutar primero: python generate_manifest.py"
         exit 1
     fi
+
+    echo "======================================================================"
+    echo " CONFIGURACIÓN ACTIVA DE DESCARGA Y PREPROCESAMIENTO CMIP6"
+    echo "======================================================================"
+    echo " Manifiesto           : $MANIFEST"
+    echo " Hilos CDO (-P)       : $CDO_THREADS CPUs (Máximo rendimiento)"
+    echo " Dominio sellonlatbox : [lon: $LON_LEFT a $LON_RIGHT, lat: $LAT_DOWN a $LAT_UP]"
+    echo " Período Historical   : $HISTORICAL_START_YEAR a $HISTORICAL_END_YEAR"
+    echo " Período Escenarios   : $SSP_START_YEAR a $SSP_END_YEAR"
+    echo " Límite ancho banda   : $([ "$MAX_DOWNLOAD_LIMIT" == "0" ] && echo "Libre / Sin límite" || echo "$MAX_DOWNLOAD_LIMIT")"
+    if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
+        echo " Sincronización SSH   : ACTIVADA (${SSH_TARGET}:${REMOTE_DEST_DIR})"
+    else
+        echo " Sincronización SSH   : DESACTIVADA (Guardando localmente en $LOCAL_OUTPUT_DIR)"
+    fi
+    echo "======================================================================"
+    echo ""
+
+    # Extraer combinaciones únicas (aplicando filtros CLI si los hay)
+    mapfile -t COMBOS < <(filter_combos "$FILTER_MODELS" "$FILTER_EXPS" "$FILTER_VARS")
+
+    if [ ${#COMBOS[@]} -eq 0 ]; then
+        echo "[AVISO] No hay combinaciones que coincidan con los filtros especificados en '$MANIFEST'."
+        exit 0
+    fi
+
+    print_manifest_catalog
+
+    if [ "$LIST_ONLY" = true ]; then
+        exit 0
+    fi
+
+    # Menú interactivo (solo si hay terminal TTY, no se pasó -y ni filtros por CLI)
+    if [ "$NON_INTERACTIVE" = false ] && [ -t 0 ] && [ -z "$FILTER_MODELS" ] && [ -z "$FILTER_EXPS" ] && [ -z "$FILTER_VARS" ]; then
+        read -r -p " ¿Cómo deseas proceder? [T]odo / [I]ndividual (filtrar) / [N]o cancelar [T]: " choice
+        choice=$(echo "${choice:-T}" | tr '[:upper:]' '[:lower:]')
+        case "$choice" in
+            n|no)
+                echo "[INFO] Descarga cancelada por el usuario."
+                exit 0
+                ;;
+            i|ind|individual)
+                echo ""
+                echo "--- SELECCIÓN INDIVIDUAL (deja vacío y presiona ENTER para incluir todo) ---"
+                read -r -p " Números o nombres de modelos (ej. 1,8 o NorESM2-MM): " sel_m_raw
+                local sel_models=""
+                if [ -n "$sel_m_raw" ]; then
+                    IFS=',' read -ra tokens <<< "$sel_m_raw"
+                    local resolved=()
+                    for tok in "${tokens[@]}"; do
+                        tok=$(echo "$tok" | xargs)
+                        if [[ "$tok" =~ ^[0-9]+$ ]] && [ "$tok" -ge 1 ] && [ "$tok" -le "${#MODEL_SUMMARY[@]}" ]; then
+                            local idx_m=$((tok - 1))
+                            resolved+=("$(echo "${MODEL_SUMMARY[$idx_m]}" | cut -f1)")
+                        elif [ -n "$tok" ]; then
+                            resolved+=("$tok")
+                        fi
+                    done
+                    sel_models=$(IFS=','; echo "${resolved[*]}")
+                fi
+                read -r -p " Experimentos (ej. historical,ssp585) [todos]: " sel_exps
+                read -r -p " Variables (ej. pr,tasmax,tasmin) [todas]: " sel_vars
+
+                mapfile -t COMBOS < <(filter_combos "$sel_models" "$sel_exps" "$sel_vars")
+                if [ ${#COMBOS[@]} -eq 0 ]; then
+                    echo "[AVISO] No se encontraron combinaciones para esa selección."
+                    exit 0
+                fi
+                echo ""
+                print_manifest_catalog
+                ;;
+            t|todo|"")
+                ;;
+            *)
+                echo "[INFO] Opción no reconocida; ejecutando descarga completa por defecto."
+                ;;
+        esac
+    fi
+
+    check_dependencies
 
     mkdir -p "$LOCAL_OUTPUT_DIR"
     mkdir -p "$TEMP_DIR"
@@ -435,27 +636,6 @@ main() {
             fi
         done
     fi
-
-    echo "======================================================================"
-    echo " PIPELINE CMIP6 PIPELINED: DESCARGA + CDO MULTI-CORE + SYNC REMOTO"
-    echo "======================================================================"
-    echo " Manifiesto           : $MANIFEST"
-    echo " Hilos CDO (-P)       : $CDO_THREADS CPUs (Máximo rendimiento)"
-    echo " Dominio sellonlatbox : [lon: $LON_LEFT a $LON_RIGHT, lat: $LAT_DOWN a $LAT_UP]"
-    echo " Período Historical   : $HISTORICAL_START_YEAR a $HISTORICAL_END_YEAR"
-    echo " Período Escenarios   : $SSP_START_YEAR a $SSP_END_YEAR"
-    echo " Límite ancho banda   : $([ "$MAX_DOWNLOAD_LIMIT" == "0" ] && echo "Libre / Sin límite" || echo "$MAX_DOWNLOAD_LIMIT")"
-    if [ "$ENABLE_REMOTE_SYNC" == "true" ]; then
-        echo " Sincronización SSH   : ACTIVADA"
-        echo " Destino remoto       : ${SSH_TARGET}:${REMOTE_DEST_DIR}"
-    else
-        echo " Sincronización SSH   : DESACTIVADA (Guardando localmente en $LOCAL_OUTPUT_DIR)"
-    fi
-    echo "======================================================================"
-    echo ""
-
-    # Extraer combinaciones únicas de (source_id, variant_label, experiment_id, variable_id)
-    mapfile -t COMBOS < <(tail -n +2 "$MANIFEST" | tr -d '\r' | awk -F'\t' '{print $1"\t"$2"\t"$3"\t"$4}' | sort -u)
 
     total_combos=${#COMBOS[@]}
     current_idx=0

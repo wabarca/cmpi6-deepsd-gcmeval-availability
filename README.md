@@ -422,14 +422,27 @@ El script Bash ejecuta el flujo automatizado de alto rendimiento:
 6. **Transferencia Remota Automática**: Envía el archivo resultante vía `rsync` (o `scp`) a `<USUARIO>@<IP_SERVIDOR>:<RUTA_DESTINO>/<MODELO>/`.
 7. **Limpieza Inmediata de Disco**: Tras confirmar la transferencia, elimina los archivos brutos y procesados locales, manteniendo la PC de descarga siempre con espacio libre.
 
-**Ejecución estándar:**
+**Ejecución estándar y selección interactiva:**
+Al iniciar en una terminal interactiva, el script muestra el resumen de configuración y el **listado numerado de modelos, experimentos y variables** disponibles en el manifiesto, permitiendo elegir entre descargar **`[T]odo`**, hacer una selección **`[I]ndividual`** (filtrando por modelos, experimentos o variables) o **`[N]o` cancelar**:
+
 ```bash
 # Dar permisos de ejecución
 chmod +x download_preprocess_cmip6.sh
 
-# Ejecutar flujo de descarga y procesamiento
+# Ejecutar con menú interactivo (Todo / Individual / Cancelar)
 ./download_preprocess_cmip6.sh
+
+# Solo listar los modelos, experimentos y variables del manifiesto
+./download_preprocess_cmip6.sh --list
+
+# Descargar todo directamente sin menú interactivo
+./download_preprocess_cmip6.sh -y
+
+# Descarga individual / selectiva por línea de comandos
+./download_preprocess_cmip6.sh --model "NorESM2-MM,EC-Earth3" --exp "historical,ssp585" --var "pr,tasmax,tasmin"
 ```
+
+También es posible pasar filtros al gestor en segundo plano (`./run_background.sh start --model "NorESM2-MM"`), el cual activa `-y` automáticamente para ejecutarse sin bloqueo.
 
 **Personalización de variables de entorno:**
 ```bash

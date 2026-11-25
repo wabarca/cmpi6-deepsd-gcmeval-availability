@@ -27,8 +27,9 @@ case "${1:-status}" in
             exit 0
         fi
 
-        echo "Iniciando pipeline en segundo plano..."
-        nohup "$SCRIPT" > "$LOG_FILE" 2>&1 &
+        echo "Iniciando descarga y procesamiento en segundo plano..."
+        shift || true
+        nohup "$SCRIPT" -y "$@" > "$LOG_FILE" 2>&1 &
         echo $! > "$PID_FILE"
         echo "[OK] Proceso iniciado con PID: $(cat "$PID_FILE")"
         echo "Logs redirigidos a: $LOG_FILE"
