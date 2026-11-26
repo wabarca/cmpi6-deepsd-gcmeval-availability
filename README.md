@@ -19,7 +19,8 @@ Este repositorio contiene las herramientas automatizadas para:
 - [Requisitos y Dependencias](#-requisitos-y-dependencias)
 - [Modelos, Variables y Experimentos](#-modelos-variables-y-experimentos)
 - [Evaluación Climatológica y Selección de Ensamble (GCMEval)](#evaluación-climatológica-y-selección-de-ensamble-gcmeval)
-  - [Diseño y Justificación Climatológica de los 9 Experimentos (E0 a E8)](#diseño-y-justificación-climatológica-de-los-9-experimentos-e0-a-e8)
+  - [Marco Conceptual y Referencias Fundamentales (2016–2020)](#marco-conceptual-y-referencias-fundamentales-20162020)
+  - [Diseño de los 9 Experimentos de Sensibilidad (E0 a E8)](#diseño-de-los-9-experimentos-de-sensibilidad-e0-a-e8)
   - [Metodología de Selección en 3 Etapas](#metodología-de-selección-en-3-etapas)
   - [Anexo Técnico: Cálculo de Estadísticas GCMEval para Nuevos Modelos (CDO + R)](#anexo-técnico-cálculo-de-estadísticas-gcmeval-para-nuevos-modelos-cdo--r)
 - [Flujo de Trabajo Paso a Paso](#-flujo-de-trabajo-paso-a-paso)
@@ -182,9 +183,22 @@ Por defecto, la evaluación se configura sobre la región IPCC **`"Central Ameri
 
 ---
 
+### Marco Conceptual y Referencias Fundamentales (2016–2020)
+
+La selección de modelos en este flujo de trabajo se apoya en tres estudios complementarios que definen el problema del submuestreo, su operacionalización regional y el control de desempeño e independencia en CMIP6:
+
+**1. El diagnóstico del submuestreo regional — McSweeney & Jones (2016)** ([`10.1016/j.cliser.2016.02.001`](https://doi.org/10.1016/j.cliser.2016.02.001))  
+En estudios de impacto climático y *downscaling* suele ser computacionalmente inviable procesar todo el conjunto de modelos globales disponibles (36 GCMs en CMIP5), por lo que se recurre a subconjuntos reducidos. Mediante la métrica de **Cobertura Fraccional del Rango (FRC)**, los autores auditan el subconjunto global de 5 modelos usado en ISI-MIP y demuestran que captura en mediana el 75% del rango de temperatura futura, pero apenas el 55% del rango de precipitación (cayendo hasta el 30% en varias regiones y estaciones), lo que subestima la incertidumbre real. Prueban que para cubrir el 80%–90% del rango globalmente se requieren al menos 13–20 modelos, mientras que una **selección optimizada estratégicamente para una región específica** permite capturar un rango mucho mayor con menos modelos (por ejemplo, 6 para temperatura y 10 para precipitación alcanzan el 80% de cobertura regional). Finalmente, recomiendan acompañar todo estudio basado en subconjuntos con gráficos de dispersión o mapas que transparenten qué fracción del conjunto completo está siendo representada.
+
+**2. La operacionalización interactiva — Parding et al. (2020), *GCMeval*** ([`10.1016/j.cliser.2020.100167`](https://doi.org/10.1016/j.cliser.2020.100167))  
+Parding et al. llevan directamente las conclusiones de McSweeney & Jones (2016) a una herramienta abierta y reproducible (*GCMeval*) para evaluar y seleccionar conjuntos CMIP5 y CMIP6. Dado que un subconjunto global fijo falla a escala regional, *GCMeval* permite asignar pesos (`0`, `1`, `2`) según la **región de enfoque**, las **estaciones** del año, las **variables** (`tas`, `pr`) y cuatro **métricas de desempeño histórico** respecto a observaciones (sesgo absoluto, correlación espacial, razón de desviación estándar y RMSE del ciclo anual). Además, implementa la recomendación visual mediante **diagramas de dispersión ($\Delta T$ vs $\Delta P$) con diagramas de caja (boxplots)** que muestran en tiempo real el espacio cubierto por el subconjunto frente al conjunto total, equilibrando el muestreo del rango futuro con la habilidad para reproducir el clima presente y evitando elegir extremos futuros causados por sesgos físicos severos.
+
+**3. El filtro de desempeño e independencia — Brunner et al. (2020), *ClimWIP*** ([`10.5194/esd-11-995-2020`](https://doi.org/10.5194/esd-11-995-2020))  
+Al evaluar 33 modelos de CMIP6 (129 simulaciones), Brunner et al. advierten sobre dos sesgos de tratar a todos los modelos por igual (*"democracia de modelos"*): por un lado, varios modelos con sensibilidad climática muy alta proyectan calentamientos extremos pero reproducen mal el clima histórico observado (1980–2014); por otro, muchos modelos comparten código, parametrizaciones o pertenecen a una misma familia, por lo que darles igual peso infla artificialmente la confianza en ciertos resultados. Mediante el método *ClimWIP* (validado con pruebas de modelo perfecto usando CMIP5, logrando una mejora promedio del 17% en habilidad predictiva), los autores ponderan tanto el **desempeño histórico multi-métrica** (cinco diagnósticos de temperatura y presión frente a ERA5 y MERRA-2) como la **independencia estructural** (penalizando modelos redundantes según su "árbol genealógico"). En este proyecto, ese principio respalda la **desduplicación intra-familia** (retener un único representante por familia) y el **descarte de modelos con desempeño histórico deficiente**.
+
 ---
 
-### Diseño y Justificación Climatológica de los 9 Experimentos (E0 a E8)
+### Diseño de los 9 Experimentos de Sensibilidad (E0 a E8)
 
 En el motor analítico y la interfaz de **GCMEval**, cada parámetro se calibra mediante pesos enteros discretos:
 - **`0` = No considerado** (peso nulo).
@@ -204,23 +218,6 @@ En el motor analítico y la interfaz de **GCMEval**, cada parámetro se calibra 
 | **E6** | **Precipitación en Época Lluviosa** | 1 | **2** | 1 | 0 | **2** | **2** | **2** | 1 | 1 | 1 | 1 |
 | **E7** | **Termodinámica Pura (Solo Temp)** | **2** | 0 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
 | **E8** | **Hidrología Pura (Solo Lluvia)** | 0 | **2** | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
-
-#### 📚 Sustento Científico y Referencias Meteorológicas para Centroamérica
-
-| Proceso Meteorológico Regional | Justificación Física y Relevancia en el Istmo | Referencias Científicas |
-|:---|:---|:---|
-| **Canícula / Veranillo (Mid-Summer Drought - MSD)** | Disminución de lluvias en julio-agosto dentro de la época lluviosa, modulada por la aceleración del Chorro del Caribe y divergencia de humedad. | *Magaña et al. (1999); Maldonado et al. (2016); Hidalgo et al. (2017)* |
-| **Chorro de Bajo Nivel del Caribe (CLLJ)** | Flujo de vientos alisios que transporta humedad del Atlántico e interactúa con la cordillera generando contraste vertiente Caribe vs Pacífica. | *Amador (1998, 2008); Muñoz et al. (2008); Cook & Vizy (2010)* |
-| **Teleconexiones ENOS / OAM** | Forzamiento del Pacífico ecuatorial que induce sequías severas en el Corredor Seco (El Niño) o excesos hídricos (La Niña). | *Enfield & Alfaro (1999); Alfaro (2007); Taylor et al. (2012)* |
-| **Evaluación Multicriterio y Submuestreo Regional CMIP6** | Selección regionalmente optimizada, cobertura de rango futuro (*FRC*) y control de desempeño e independencia entre familias de modelos. | *McSweeney & Jones (2016); Parding et al. (2020); Brunner et al. (2020)* |
-
-#### 🔗 Marco Conceptual: Evolución Metodológica (2016–2020)
-
-| Estudio | Aporte al Flujo de Selección | DOI |
-|:---|:---|:---|
-| **McSweeney & Jones (2016)** | Demuestra que un subconjunto global fijo subestima la incertidumbre regional (especialmente en precipitación) y justifica la **selección optimizada por región** acompañada de gráficos de dispersión del rango cubierto (*Fractional Range Coverage*, FRC). | [10.1016/j.cliser.2016.02.001](https://doi.org/10.1016/j.cliser.2016.02.001) |
-| **Parding et al. (2020) — *GCMeval*** | Operacionaliza la selección estratégica regional en una herramienta interactiva que combina **ranking por desempeño histórico** (Bias, SD, Correlación, RMSE) con **diagramas de dispersión ($\Delta T$ vs $\Delta P$) y boxplots** del rango futuro. | [10.1016/j.cliser.2020.100167](https://doi.org/10.1016/j.cliser.2020.100167) |
-| **Brunner et al. (2020) — *ClimWIP*** | Advierte contra la "democracia de modelos" en CMIP6: penaliza la redundancia por código compartido (*árbol genealógico*) y los modelos con sensibilidad extrema que fallan en reproducir el clima histórico, respaldando la **desduplicación por familia** y el filtro de desempeño. | [10.5194/esd-11-995-2020](https://doi.org/10.5194/esd-11-995-2020) |
 
 ---
 
