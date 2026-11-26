@@ -65,7 +65,7 @@ if [ -z "${MANIFEST:-}" ]; then
 fi
 
 # Directorio temporal local de trabajo (se limpia automáticamente tras procesar)
-TEMP_DIR="${TEMP_DIR:-./tmp_cmip6_pipeline}"
+TEMP_DIR="${TEMP_DIR:-./tmp_cmip6_processing}"
 
 # Directorio local de salida (en caso de que la sincronización remota esté desactivada)
 LOCAL_OUTPUT_DIR="${LOCAL_OUTPUT_DIR:-./CMIP6_GCMs_Processed}"
