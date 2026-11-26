@@ -480,11 +480,11 @@ filter_combos() {
         {
             full = tolower($1 "." $2)
             src  = tolower($1)
-            exp  = tolower($3)
-            var  = tolower($4)
+            exp_val = tolower($3)
+            var_val = tolower($4)
             ok_m = (mf == "" || (full in m_sel) || (src in m_sel))
-            ok_e = (ef == "" || (exp in e_sel))
-            ok_v = (vf == "" || (var in v_sel))
+            ok_e = (ef == "" || (exp_val in e_sel))
+            ok_v = (vf == "" || (var_val in v_sel))
             if (ok_m && ok_e && ok_v) {
                 print $1 "\t" $2 "\t" $3 "\t" $4
             }
