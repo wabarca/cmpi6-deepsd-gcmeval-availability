@@ -474,8 +474,8 @@ def check_r_packages(rscript_exe, auto_install=False):
         'installed <- rownames(installed.packages()); '
         'missing_cran <- req_cran[!req_cran %in% installed]; '
         'has_gcmeval <- "gcmeval" %in% installed; '
-        'cat(paste("CRAN_MISSING:", paste(missing_cran, collapse=","), "\n")); '
-        'cat(paste("GCMEVAL_INSTALLED:", has_gcmeval, "\n"))'
+        'cat(paste("CRAN_MISSING:", paste(missing_cran, collapse=","), "\\n")); '
+        'cat(paste("GCMEVAL_INSTALLED:", has_gcmeval, "\\n"))'
     )
     
     try:
