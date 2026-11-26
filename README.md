@@ -40,6 +40,7 @@ Este repositorio contiene las herramientas automatizadas para:
 ```text
 .
 ├── esgf-query.py                  # Script principal: consulta ESGF Solr, genera inventario y extrae URLs
+├── prepare_gcmeval_models.py      # Incorpora nuevos modelos completos en ESGF (Amon tas/pr) a GCMEval
 ├── run_evaluation.py              # Orquestador Python de evaluación climatológica GCMEval en R
 ├── evaluation_config.yaml         # Configuración de regiones, observaciones, métricas y experimentos
 ├── generate_manifest.py           # Generador dinámico de manifiestos a partir de results/selected_models.csv
@@ -48,6 +49,7 @@ Este repositorio contiene las herramientas automatizadas para:
 ├── run_background.sh              # Gestor de ejecución en segundo plano (start, status, log, stop)
 ├── gcmeval/                       # Módulo analítico y motor de evaluación de GCMEval
 │   ├── run_cmip6_evaluation.R     # Script R principal: ejecuta experimentos, ranking 3 etapas y spread
+│   ├── update_gcmeval_db.R        # Actualiza meta.rda/statistics.rda con respaldo automático previo
 │   ├── gcmeval_models.csv         # Catálogo de 120 modelos evaluables en GCMEval
 │   ├── back-end/                  # Paquete R gcmeval, funciones estadísticas y datos (statistics.rda)
 │   └── front-end/                 # Aplicación web interactiva Shiny
@@ -235,56 +237,32 @@ Para estructurar un ensamble multi-modelo robusto e independiente (evitando la s
 
 ---
 
-### Anexo Técnico: Cálculo de Estadísticas GCMEval para Nuevos Modelos (CDO + R)
+### Anexo Técnico: Incorporación Automática de Nuevos Modelos a GCMEval (`prepare_gcmeval_models.py`)
 
-Si se desea incorporar al ranking un nuevo modelo CMIP6 disponible en ESGF que no figure actualmente en el archivo precomputado `statistics.rda` de GCMEval (por ejemplo, `ACCESS-CM2` o `ACCESS-ESM1-5`):
+Si tras ejecutar `esgf-query.py` existen realizaciones 100% completas en ESGF que aún no figuran en `gcmeval` (por ejemplo, `ACCESS-CM2.r4i1p1f1`), puedes incorporarlas automáticamente a `meta.rda` y `statistics.rda` usando [`prepare_gcmeval_models.py`](prepare_gcmeval_models.py) y [`gcmeval/update_gcmeval_db.R`](gcmeval/update_gcmeval_db.R):
 
-#### 1. Diagnóstico del Paquete `gcmeval`
-El paquete `gcmeval` utiliza un archivo interno de datos comprimido `data/statistics.rda` que almacena un objeto `list` indexado por:
-- Variable: `tas`, `pr`, `psl`, etc.
-- Experimento / Escenario: `historical`, `ssp126`, `ssp245`, `ssp370`, `ssp585`.
-- Período: `period.1981_2010`, `period.2071_2100`, etc.
-- Región: `CAM:6`, `GL:0`, `WNA:1`, etc.
-- Métricas: Climatología mensual (12 meses), sesgo medio (*Bias*), correlación de Pearson espacial/temporal (*r*), error cuadrático medio (*RMSE*), desviación estándar (*SD*), etc., calculadas respecto a las grillas comunes de referencia (ERA5 a $1^\circ \times 1^\circ$ y GPCP a $2.5^\circ \times 2.5^\circ$).
+1. **Credenciales para ERA5 (una sola vez)**:
+   - **GPCP** (`pr`) se descarga de forma pública desde NOAA PSL en `cache/ref/gpcp.nc`.
+   - **ERA5** (`tas`) requiere credenciales de Copernicus CDS (`cdsapi`), que nunca se sincronizan con Git:
+     - Coloca tu archivo `.cdsapirc` en `~/.cdsapirc` o en la raíz del repositorio (`.cdsapirc` está en `.gitignore`), **o bien**
+     - Define `CDSAPI_URL` y `CDSAPI_KEY` en tu archivo local `.env` (o variables de entorno).
+   - Ambos archivos observacionales se verifican en `cache/ref/` (`1981–2010`) y se descargan únicamente si faltan o están incompletos.
 
-#### 2. Proceso de Preprocesamiento con CDO para Nuevos Modelos
-Para cada nuevo modelo `MODEL` y variante `VAR`:
+2. **Uso del preparador de modelos**:
+   ```bash
+   # Listar modelos completos en ESGF que faltan en GCMEval
+   python prepare_gcmeval_models.py --list
 
-```bash
-# Paso A: Remapeo a la grilla estándar de ERA5 / GPCP
-cdo -O remapbil,r360x180 tas_day_${MODEL}_historical_${VAR}_19810101-20101231.nc tas_1x1_hist.nc
-cdo -O remapbil,r360x180 tas_day_${MODEL}_ssp585_${VAR}_20710101-21001231.nc tas_1x1_ssp585.nc
+   # Selección interactiva o directa por CLI (descarga Amon tas/pr, concatena globalmente con CDO y actualiza GCMEval)
+   python prepare_gcmeval_models.py
+   python prepare_gcmeval_models.py --model "ACCESS-CM2.r4i1p1f1" -y
 
-# Paso B: Cálculo de medias mensuales y ciclo anual climatológico
-cdo -O monmean tas_1x1_hist.nc tas_mon_hist.nc
-cdo -O ymonmean tas_mon_hist.nc tas_ymon_hist.nc          # 12 pasos temporales (ciclo anual)
-cdo -O timmean tas_mon_hist.nc tas_climatology_hist.nc    # Media climatológica 1981-2010
+   # En caso de error, restaurar el último respaldo automático de meta.rda y statistics.rda
+   python prepare_gcmeval_models.py --restore-backup
+   ```
 
-# Paso C: Repetir para precipitación (pr) convirtiendo unidades (kg m-2 s-1 a mm/día)
-cdo -O -mulc,86400 -remapbil,r144x72 pr_day_${MODEL}_historical_${VAR}_19810101-20101231.nc pr_2.5x2.5_hist.nc
-cdo -O -mulc,86400 -remapbil,r144x72 pr_day_${MODEL}_ssp585_${VAR}_20710101-21001231.nc pr_2.5x2.5_ssp585.nc
-cdo -O ymonmean -monmean pr_2.5x2.5_hist.nc pr_ymon_hist.nc
-```
-
-#### 3. Script R para Actualizar `statistics.rda`
-Con las capas mensuales y anuales recortadas por las máscaras poligonales de IPCC WGI (Región 6 - CAM), se ejecutan las funciones del script complementario `calculate_statistics.R` del paquete:
-
-```R
-# 1. Cargar estadísticas existentes
-load("gcmeval/data/statistics.rda")
-
-# 2. Agregar el nuevo modelo al slot correspondiente
-new_gcm_id <- "CMIP6.ACCESS_CM2.r4i1p1f1"
-statistics[["tas"]][["historical"]][["period.1981_2010"]][["ERA5"]][[new_gcm_id]] <- tas_stats_access
-statistics[["pr"]][["historical"]][["period.1981_2010"]][["GPCP"]][[new_gcm_id]]  <- pr_stats_access
-statistics[["tas"]][["ssp585"]][["period.2071_2100"]][[new_gcm_id]]               <- tas_future_access
-statistics[["pr"]][["ssp585"]][["period.2071_2100"]][[new_gcm_id]]                <- pr_future_access
-
-# 3. Guardar el archivo actualizado
-save(statistics, file = "gcmeval/data/statistics.rda", compress = "xz")
-```
-
-Una vez actualizado `statistics.rda`, el script `run_cmip6_evaluation.R` detectará y evaluará automáticamente los nuevos modelos incorporados.
+3. **Seguridad y respaldo**:
+   - Antes de modificar `gcmeval/back-end/data/meta.rda` y `statistics.rda`, `update_gcmeval_db.R` crea un respaldo con marca de tiempo en `gcmeval/back-end/data/backups/` (ignorado en `.gitignore`), procesa en una carpeta temporal, reinstala el paquete local `gcmeval` y sincroniza `gcmeval/gcmeval_models.csv`.
 
 ---
 

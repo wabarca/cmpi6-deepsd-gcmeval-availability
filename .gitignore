@@ -72,3 +72,7 @@ cache/
 .env
 .env.*
 !.env.example
+.cdsapirc
+
+# GCMEval database backups
+gcmeval/back-end/data/backups/
