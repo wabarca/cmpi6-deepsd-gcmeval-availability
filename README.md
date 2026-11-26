@@ -172,7 +172,7 @@ flowchart TD
 
 ## 📊 Evaluación Climatológica y Selección de Ensamble (GCMEval)
 
-Para garantizar la representatividad y robustez climática de los modelos globales (GCM) seleccionados para el downscaling estadístico (*DeepSD*), se integró el motor analítico de **GCMEval** ([Brunner et al., 2020](https://doi.org/10.5194/esd-11-995-2020)).
+Para garantizar la representatividad y robustez climática de los modelos globales (GCM) seleccionados para el downscaling estadístico (*DeepSD*), se integró el motor analítico de **GCMEval** ([Parding et al., 2020](https://doi.org/10.1016/j.cliser.2020.100167)), sustentado en los principios de submuestreo regional estratégico de [McSweeney & Jones (2016)](https://doi.org/10.1016/j.cliser.2016.02.001) y complementado con criterios de desempeño histórico e independencia entre familias de modelos ([Brunner et al., 2020](https://doi.org/10.5194/esd-11-995-2020)).
 
 Por defecto, la evaluación se configura sobre la región IPCC **`"Central America/Mexico [CAM:6]"`** como dominio primario y mantiene la **región secundaria desactivada (`weight: 0.0`)** para no influir en el cálculo. Es posible seleccionar cualquiera de las **34 regiones preestablecidas de GCMEval** (y activar opcionalmente una región secundaria ponderada) desde [`evaluation_config.yaml`](evaluation_config.yaml), el asistente interactivo (`--wizard`) o los parámetros CLI de [`run_evaluation.py`](run_evaluation.py). Los datos observacionales de referencia globales soportados son:
 - **Temperatura (`tas`)**: Reanálisis **ERA5** (ECMWF) — también soporta `NCEP`, `CRU`.
@@ -212,7 +212,15 @@ En el motor analítico y la interfaz de **GCMEval**, cada parámetro se calibra 
 | **Canícula / Veranillo (Mid-Summer Drought - MSD)** | Disminución de lluvias en julio-agosto dentro de la época lluviosa, modulada por la aceleración del Chorro del Caribe y divergencia de humedad. | *Magaña et al. (1999); Maldonado et al. (2016); Hidalgo et al. (2017)* |
 | **Chorro de Bajo Nivel del Caribe (CLLJ)** | Flujo de vientos alisios que transporta humedad del Atlántico e interactúa con la cordillera generando contraste vertiente Caribe vs Pacífica. | *Amador (1998, 2008); Muñoz et al. (2008); Cook & Vizy (2010)* |
 | **Teleconexiones ENOS / OAM** | Forzamiento del Pacífico ecuatorial que induce sequías severas en el Corredor Seco (El Niño) o excesos hídricos (La Niña). | *Enfield & Alfaro (1999); Alfaro (2007); Taylor et al. (2012)* |
-| **Evaluación Multicriterio CMIP6** | Marco formal para ponderar modelos por desempeño y evitar sesgos por promedio simple o redundancia de código. | *Brunner et al. (2020); Parding et al. (2020); Almazroui et al. (2021)* |
+| **Evaluación Multicriterio y Submuestreo Regional CMIP6** | Selección regionalmente optimizada, cobertura de rango futuro (*FRC*) y control de desempeño e independencia entre familias de modelos. | *McSweeney & Jones (2016); Parding et al. (2020); Brunner et al. (2020)* |
+
+#### 🔗 Marco Conceptual: Evolución Metodológica (2016–2020)
+
+| Estudio | Aporte al Flujo de Selección | DOI |
+|:---|:---|:---|
+| **McSweeney & Jones (2016)** | Demuestra que un subconjunto global fijo subestima la incertidumbre regional (especialmente en precipitación) y justifica la **selección optimizada por región** acompañada de gráficos de dispersión del rango cubierto (*Fractional Range Coverage*, FRC). | [10.1016/j.cliser.2016.02.001](https://doi.org/10.1016/j.cliser.2016.02.001) |
+| **Parding et al. (2020) — *GCMeval*** | Operacionaliza la selección estratégica regional en una herramienta interactiva que combina **ranking por desempeño histórico** (Bias, SD, Correlación, RMSE) con **diagramas de dispersión ($\Delta T$ vs $\Delta P$) y boxplots** del rango futuro. | [10.1016/j.cliser.2020.100167](https://doi.org/10.1016/j.cliser.2020.100167) |
+| **Brunner et al. (2020) — *ClimWIP*** | Advierte contra la "democracia de modelos" en CMIP6: penaliza la redundancia por código compartido (*árbol genealógico*) y los modelos con sensibilidad extrema que fallan en reproducir el clima histórico, respaldando la **desduplicación por familia** y el filtro de desempeño. | [10.5194/esd-11-995-2020](https://doi.org/10.5194/esd-11-995-2020) |
 
 ---
 
